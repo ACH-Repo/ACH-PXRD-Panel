@@ -1,0 +1,5 @@
+# What the sdist carries besides the package, README, LICENSE and
+# tests/test*.py (setuptools takes those by itself). The tests need their
+# conftest; the README points at the changelog.
+include CHANGELOG.md
+include tests/conftest.py

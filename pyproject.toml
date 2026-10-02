@@ -1,0 +1,68 @@
+[build-system]
+# 77 for the SPDX `license` and `license-files` (PEP 639): the old table
+# form and the licence classifier are deprecated.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# The name is provisional (PXRD-Panel), as the DSC sibling's was before it
+# became Triplot. The import name is `pxrdpanel`.
+name = "ach-pxrd-panel"
+dynamic = ["version"]
+description = "An interactive panel for stacked powder X-ray diffraction patterns (Bruker .raw and .brml, Riet7 .dat, .xy; CIFs and ICDD cards simulated)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Christian Nelle" }]
+keywords = ["pxrd", "powder diffraction", "xrd", "bruker", "brml", "cif",
+            "d-spacing", "plotting"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Operating System :: Microsoft :: Windows",
+    "Environment :: X11 Applications :: Qt",
+]
+dependencies = [
+    "numpy",
+    # Essentials, not "PySide6": QtCore, QtGui, QtWidgets and QtSvg are all
+    # it uses, about 215 MB installed; the full PySide6 adds PySide6-Addons
+    # (WebEngine, 3D, Charts, ...), another 460 MB (PySide6 6.11).
+    "PySide6-Essentials",
+    # Skeletal structures from a pasted SMILES (core/chem.py). A core
+    # dependency: without it, pasting one on a fresh install did nothing
+    # visible. A session with a structure opens without it all the same.
+    "rdkit",
+    # Space groups for a CIF (the copied MoloM core, core/_molom): a CIF
+    # that names its group but lists no symmetry operators is expanded
+    # through it. A few MB.
+    "spglib",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+# Two entry points on purpose. The console one prints (a version check, a
+# reader warning); the windowed one is what a Start Menu shortcut points
+# at, so no console flashes up behind the window. Both run the same main().
+#
+# The NAMES are deliberately in one place only: `pxrdpanel.branding`. A rename
+# changes that module, these two lines, and nothing else - see
+# `pxrdpanel.branding.LEGACY_NAMES` for how an old name is cleaned up.
+[project.scripts]
+pxrd-panel = "pxrdpanel.__main__:main"
+
+[project.gui-scripts]
+pxrd-panel-gui = "pxrdpanel.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "pxrdpanel.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"pxrdpanel.resources" = ["*.svg", "*.png", "*.ico"]

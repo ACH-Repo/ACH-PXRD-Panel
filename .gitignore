@@ -1,0 +1,17 @@
+*.egg-info/
+*.py[cod]
+.venv/
+__pycache__/
+build/
+dist/
+
+# measurement data stays out of the repo; tests find it on disk
+*.raw
+*.brml
+*.xy
+*.xye
+*.dat
+*.cif
+tests/_out/
+tests/local_testdata.txt
+.pytest_cache/
