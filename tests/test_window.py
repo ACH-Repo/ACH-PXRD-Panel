@@ -448,25 +448,71 @@ def test_normalisation_is_one_undo_step(window):
     assert [s.offset for s in window.doc.scans] == pytest.approx(offsets)
 
 
-def test_all_together_from_the_canvas_and_f3(window):
-    """A tick on the empty plot's right-click menu turns "all together,
-    0 to 1" on and off; F3 has it and "each 0 to 1" beside it."""
-    assert window.ops.get("view.norm_global") is not None
-    assert window.ops.get("view.norm_range") is not None
-    menu = window.context_menu_for(None)
-    [tick] = [a for a in menu.actions() if a.text().startswith(
-        "Normalise all patterns together")]
-    assert tick.isCheckable() and not tick.isChecked()
-    tick.trigger()
-    assert window.doc.norm == units.NORM_GLOBAL
-    menu = window.context_menu_for(None)
-    [tick] = [a for a in menu.actions() if a.text().startswith(
-        "Normalise all patterns together")]
-    assert tick.isChecked()
-    tick.trigger()
-    assert window.doc.norm == units.NORM_NONE
-    assert window.run_op("view.norm_range")
-    assert window.doc.norm == units.NORM_RANGE
+def test_the_plots_normalise_menu_has_all_four(window):
+    """The empty plot's right-click "Normalise": none, individual,
+    global, or to a peak - the one in force ticked, each choice one undo
+    step. F3 has them too."""
+    for op_id in ("view.norm_none", "view.norm_range", "view.norm_global",
+                  "view.norm_band"):
+        assert window.ops.get(op_id) is not None
+    window.ask_positions = lambda title, text="": (16.8, 17.8)
+
+    def entries():
+        menu = window.context_menu_for(None)
+        sub = menu._norm
+        assert sub.title() == "Normalise"
+        return menu, [a for a in sub.actions() if not a.isSeparator()]
+
+    _menu, actions = entries()
+    assert [a.text() for a in actions][0] == "None"
+    assert actions[-1].text() == "To a peak..."
+    wanted = (units.NORM_RANGE, units.NORM_GLOBAL, units.NORM_BAND,
+              units.NORM_NONE)
+    for index, norm in zip((1, 2, 3, 0), wanted):
+        before = window.doc.norm
+        _menu, actions = entries()
+        actions[index].trigger()
+        assert window.doc.norm == norm
+        _menu, actions = entries()
+        assert [a.isChecked() for a in actions].count(True) == 1
+        assert actions[index].isChecked()
+        if norm != before:
+            window.undo_step()
+            assert window.doc.norm == before
+            window.redo_step()
+            assert window.doc.norm == norm
+
+
+def test_the_x_captions_window_changes_the_quantity(window):
+    """Double-click the x caption: "Shows" 2-theta, d or Q, the figure
+    converted (one undo step, the window's), the box put back when there
+    is no wavelength to convert with."""
+    from pxrdpanel.ui.dialogs import CaptionSettings
+    axis = window.doc.axes["x"]
+    window.edit_object(axis, part="caption")
+    dialog = window._dialogs[-1]
+    assert isinstance(dialog, CaptionSettings)
+    box = dialog.quantity
+    assert [box.itemData(i) for i in range(box.count())] == list(
+        units.QUANTITIES)
+    box.setCurrentIndex(box.findData(units.D))
+    assert window.doc.x_quantity == units.D
+    assert "d" in dialog.label.placeholderText()
+    assert dialog.own_text.isHidden()
+    dialog.close()
+    window.undo_step()
+    assert window.doc.x_quantity == units.TWO_THETA
+    window.edit_object(window.doc.axes["y"], part="caption")
+    assert window._dialogs[-1].quantity is None     # intensity, only
+    window._dialogs[-1].close()
+    for scan in window.doc.scans:                   # nothing to convert with
+        scan.sample.pattern.source = None
+    window.edit_object(axis, part="caption")
+    dialog = window._dialogs[-1]
+    dialog.quantity.setCurrentIndex(dialog.quantity.findData(units.Q))
+    assert window.doc.x_quantity == units.TWO_THETA
+    assert dialog.quantity.currentData() == units.TWO_THETA
+    dialog.close()
 
 
 # --------------------------------------------------------------- output
@@ -603,6 +649,64 @@ def test_a_simulations_settings_change_how_it_is_made_and_drawn(window):
     assert scan.sample.wavelength == pytest.approx(CU)
     window.edit_object(scan.sample)         # the file's own window
     window._dialogs[-1].close()
+
+
+def test_a_simulations_settings_have_an_hkl_tab(window):
+    """General and hkl: the list follows the wavelength typed on the
+    General tab, and copies as a table. A measured pattern has no tabs."""
+    window.edit_object(window.doc.scans[0])
+    assert window._dialogs[-1].tabs is None
+    window._dialogs[-1].close()
+    window._sample_loaded(card_sample())
+    scan = window.doc.scans[-1]
+    window.edit_object(scan)
+    dialog = window._dialogs[-1]
+    dialog.show()
+    tabs = dialog.tabs
+    assert [tabs.tabText(i) for i in range(tabs.count())] == ["General",
+                                                              "hkl"]
+    tabs.setCurrentIndex(1)
+    table = dialog.hkl.table
+    assert table.rowCount() == 4
+    assert not dialog.hkl.absent.isVisible()        # a card has none
+    d_column = dialog.hkl.columns.index("d / \u00c5")
+    angle = dialog.hkl.columns.index("2\u03b8 / \u00b0")
+    first = float(table.item(0, angle).text())
+    tabs.setCurrentIndex(0)
+    dialog.source.wavelength.setText("Mo Ka1")
+    tabs.setCurrentIndex(1)
+    assert float(table.item(0, angle).text()) < first        # refilled
+    lines = dialog.hkl.copy_rows()
+    assert lines[0].split("\t")[:3] == ["h", "k", "l"]
+    assert len(lines) == 5 and table.item(0, d_column).text() in lines[1]
+    dialog.revert()
+
+
+def test_hovering_a_simulation_names_the_plane(window):
+    window._sample_loaded(card_sample())
+    scan = window.doc.scans[-1]
+    for other in window.doc.scans[:-1]:
+        other.visible = False
+    window.refresh()
+    window.show()
+    plot = window.plot
+    plot.grab()
+    strongest = scan.sample.reflections()[0]
+    at = curve_point(window, scan, strongest.two_theta)
+    said = plot.readout(plot.to_figure(at))
+    assert "(1 1 0): d = 5.122 A" in said
+    # sticks name only what they draw
+    window.doc.select_only([scan])
+    window.set_drawing(crystal.DRAW_STICKS)
+    plot.grab()
+    third = [r for r in scan.sample.reflections() if r.hkl == (1, 1, 1)][0]
+    rect = plot.plot_rect()
+    at = plot.to_widget(QPointF(plot.x_to_px(third.two_theta, rect),
+                                plot.sy_to_px(scan, 10.0, rect)))
+    assert plot.reflections_under(scan, plot.to_figure(at))[0] is third
+    # a measured pattern says its offset, as before
+    assert plot.reflection_readout(window.doc.scans[0], plot.to_figure(at)) \
+        == ""
 
 
 # ------------------------------------------------ one pattern scaled, said

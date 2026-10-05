@@ -31,7 +31,7 @@ NOTES = {
     "view.x_q": "at each pattern's wavelength; positions and analyses follow",
     "scan.wavelength": "a number, an energy (keV) or a line (Cu Ka1); empty: the file's",
     "scan.draw_lines": "the N strongest reflections, dotted, across the plot",
-    "view.norm_global": "lowest of all on show 0, highest 1; also the plot's right-click",
+    "view.norm_global": "lowest of all on show 0, highest 1; also the plot's right-click, Normalise",
     "label.add": "on selected curves: their names, nothing asked",
     "view.norm_band": "the peak dragged is 1, the offsets keep their places",
     "view.break": "or drag along a curve and pick Break from the list",

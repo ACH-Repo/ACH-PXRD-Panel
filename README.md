@@ -26,7 +26,8 @@ changed is in `CHANGELOG.md`.
 
 - **Every pattern is an object** you can select, move, hide, colour and
   right-click. New files arrive stacked under the ones already open.
-- **2-theta, d or Q** along x (F3: "X axis: ..."). A pattern is recorded in
+- **2-theta, d or Q** along x (F3: "X axis: ...", or double-click the
+  x caption: "Shows"). A pattern is recorded in
   2-theta at its wavelength; d and Q are converted at each pattern's own,
   so patterns from different tubes or a synchrotron compare there. A d
   axis runs from large spacings to small, so a pattern keeps its look.
@@ -44,8 +45,8 @@ changed is in `CHANGELOG.md`.
   the patterns together 0 to 1 (the lowest value of any is 0, the highest
   of any 1, so their heights keep their proportions, and a pattern opened
   or hidden rescales the rest), each pattern 0 to 1, or each pattern's
-  chosen peak to the same strength - F3, or a tick on the plot's
-  right-click menu for "all together". The y caption says "(normalised)"
+  chosen peak to the same strength - F3, or the plot's right-click
+  menu, Normalise: None, Individual, Global or To a peak. The y caption says "(normalised)"
   whenever it is on. Changing it keeps the stack's arrangement.
 - **The x axis can be broken**: a stretch where nothing happens squeezed to
   a seam marked by slashes.

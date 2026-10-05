@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- Settings windows in an order you can work down: the text first, then
+  the colour, then what only the window can set (a marker line's
+  position, a note's point and arrow, a region's stretch), then sizes and
+  style; Show and Layer at the bottom.
+- A band marker's (marker line's) window has no arrow rows any more: they
+  belonged to notes. A label's arrow rows appear only once "Leader
+  arrow" makes it a note.
+- A region's list of curves to magnify shows only once it magnifies (a
+  factor other than 1); a plain highlight has none to choose.
+
+- No more "NORMALISED, and the y caption does not say so" stamped on the
+  figure when you type your own y caption: what you type is yours.
+
+- The plot's right-click menu has a Normalise submenu with all four
+  choices - None, Individual (each pattern 0 to 1), Global (all together,
+  0 to 1) and To a peak... - the one in force ticked. It replaces the
+  single "all together" tick.
+- Double-click the x caption: "Shows" changes what the axis shows
+  (2-theta, d or Q; without a wavelength it stays in 2-theta), one undo step. A caption you typed yourself stays as typed,
+  and the window says so.
+
+- A CIF's or a card's settings have two tabs: General (as before) and
+  hkl, its reflections at the wavelength and over the range it is
+  simulated at - h k l, d, 2-theta, Q and the intensity, and for a CIF the
+  multiplicity, |F|^2 and LP; "Show absences" adds the reflections the
+  symmetry extinguishes. Sortable by any column; "Copy the list" pastes
+  into a spreadsheet.
+- Hovering over a simulated pattern says which lattice plane the peak
+  under the pointer belongs to, in the status line: "(1 1 1) and 7 more:
+  d = 3.135 A, 2-theta = 28.44 deg, I = 100", and any other reflection
+  close by.
+
 ## 0.2.0 (2026-10-02)
 
 - The swipe (wheel, two-finger drag, middle drag) on SELECTED patterns

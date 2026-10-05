@@ -137,3 +137,18 @@ def test_no_dialog_field_is_named_like_a_qwidget_method():
                     if field in taken:
                         clashes.append("{}:{} {}".format(name, number, field))
     assert not clashes, clashes
+
+
+def test_a_regions_curves_show_only_while_it_magnifies(window):
+    """A highlight has no curves to choose; set a factor and the list is
+    there. Its text comes first, Show and Layer last (2026-10-05)."""
+    from test_family import _rows
+    region = window.add_region(30.0, 32.0)
+    window.edit_object(region)
+    dialog = window._dialogs[-1]
+    rows = _rows(dialog)
+    assert rows[0] == "Text" and "Patterns" not in rows
+    assert rows[-2:] == ["Show", "Layer"]
+    dialog.factor.setValue(3.0)
+    assert "Patterns" in _rows(dialog)
+    dialog.close()

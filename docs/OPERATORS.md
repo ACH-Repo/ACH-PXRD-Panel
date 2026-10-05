@@ -130,7 +130,7 @@ This file is GENERATED. After adding an operator, run:
 | X axis: d (A) |  | the x axis is not d | at each pattern's wavelength; positions and analyses follow |
 | X axis: Q (1/A) |  | the x axis is not Q | at each pattern's wavelength; positions and analyses follow |
 | Do not normalise |  | the patterns are normalised |  |
-| Normalise all patterns together, 0 to 1 |  | they are not normalised together | lowest of all on show 0, highest 1; also the plot's right-click |
+| Normalise all patterns together, 0 to 1 |  | they are not normalised together | lowest of all on show 0, highest 1; also the plot's right-click, Normalise |
 | Normalise each pattern 0 to 1 |  | they are not normalised 0 to 1 |  |
 | Normalise each pattern to a peak... |  | a pattern is open | the peak dragged is 1, the offsets keep their places |
 | Break the x axis... |  | a pattern is open | or drag along a curve and pick Break from the list |

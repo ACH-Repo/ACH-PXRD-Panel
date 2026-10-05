@@ -143,6 +143,7 @@ class Sample(object):
         self.sim_fwhm = crystal.DEFAULT_FWHM
         self._sim_key = None
         self._sim = None
+        self._list_cache = None
         self.scans = []
 
     @property
@@ -178,6 +179,22 @@ class Sample(object):
         first; [] for a measured one."""
         made = self.simulation()
         return list(made[2]) if made else []
+
+    def reflection_list(self, absent=False):
+        """`(reflections, note)`: a simulated sample's hkl list at its
+        wavelength and range, ascending (`crystal.reflection_list`; with
+        `absent`, a CIF's absences too), cached like the simulation."""
+        if not self.simulated:
+            return [], ""
+        wavelength = self.wavelength or crystal.DEFAULT_WAVELENGTH
+        rng = tuple(self.sim_range or crystal.DEFAULT_RANGE)
+        key = (float(wavelength), rng, bool(absent))
+        cached = self._list_cache
+        if cached is None or cached[0] != key:
+            cached = (key, crystal.reflection_list(self.pattern, wavelength,
+                                                   rng, absent))
+            self._list_cache = cached
+        return cached[1]
 
     # ------------------------------------------------------------- data
     @property
@@ -333,6 +350,19 @@ class Scan(Obj):
             return crystal.lines(reflections, self.strongest)
         return crystal.sticks(reflections, drawing == crystal.DRAW_TICKS,
                               self.strongest)
+
+    def drawn_reflections(self):
+        """The reflections this scan DRAWS - all of them as a profile, the
+        strongest N as sticks, ticks or lines - strongest first; [] for a
+        measured pattern."""
+        reflections = self.sample.reflections()
+        drawing = self.drawing
+        if drawing == crystal.DRAW_CURVE:
+            return reflections
+        count = self.strongest
+        if drawing == crystal.DRAW_LINES and count is None:
+            count = crystal.DEFAULT_STRONGEST
+        return reflections[:int(count)] if count else reflections
 
     def x_values(self, doc=None, quantity=None):
         """The samples' positions on the figure's x axis (2-theta, d or Q),

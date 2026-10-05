@@ -20,8 +20,8 @@ import re
 import sys
 
 from PySide6.QtCore import QByteArray, QPoint, QPointF, QRectF, Qt
-from PySide6.QtGui import (QAction, QColor, QCursor, QImage, QKeySequence,
-                           QPainter)
+from PySide6.QtGui import (QAction, QActionGroup, QColor, QCursor, QImage,
+                           QKeySequence, QPainter)
 from PySide6.QtWidgets import (QApplication, QDialog,
                                QDockWidget, QFileDialog, QInputDialog, QLabel,
                                QMainWindow, QMenu, QMessageBox,
@@ -1703,15 +1703,7 @@ class MainWindow(QMainWindow):
             for op_id in ("view.fit", "view.lock_framing",
                           "view.unlock_framing", "arrange.stack"):
                 self._menu_op(menu, op_id)
-            # All the curves together, 0 to 1: ticked while it is on,
-            # and unticking it takes the normalisation off.
-            together = menu.addAction(
-                "Normalise all patterns together, 0 to 1")
-            together.setCheckable(True)
-            together.setChecked(self.doc.norm == units.NORM_GLOBAL)
-            together.setEnabled(bool(self.doc.scans))
-            together.triggered.connect(lambda on: self.set_display(
-                norm=units.NORM_GLOBAL if on else units.NORM_NONE))
+            self.norm_menu(menu)
             paper = menu.addMenu("Background")
             # Held by its parent's wrapper: a submenu fetched back through
             # a temporary one can already be deleted (CLAUDE.md).
@@ -2819,6 +2811,22 @@ class MainWindow(QMainWindow):
             self._say_wavelengths()
         return changes
 
+    def axis_choices(self, axis):
+        """`([(value, title), ...], current)`: what `axis` can show, for
+        its caption's window - the x axis 2-theta, d or Q; ([], None) for
+        an axis with nothing else to show."""
+        if axis.which == "x":
+            return ([(q, units.QUANTITY_TITLES[q]) for q in units.QUANTITIES],
+                    self.doc.x_quantity)
+        return [], None
+
+    def set_axis_shows(self, axis, value):
+        """Show `value` on `axis` (`axis_choices`): `set_x_quantity`, one
+        undo step."""
+        if axis.which == "x":
+            return self.set_x_quantity(value)
+        return []
+
     def _say_wavelengths(self):
         """Patterns of different wavelengths on one 2-theta axis: said, in
         orange, every time it becomes so."""
@@ -3002,6 +3010,36 @@ class MainWindow(QMainWindow):
             self.note.setText(self.note.text() + " - {} cannot be drawn: "
                               "{}".format(len(missing), missing[0][1]))
         return changes
+
+    #: The Normalise submenu's entries, in Christian's words (2026-10-05).
+    NORM_CHOICES = ((units.NORM_NONE, "None"),
+                    (units.NORM_RANGE, "Individual: each pattern 0 to 1"),
+                    (units.NORM_GLOBAL, "Global: all patterns together, 0 to 1"),
+                    (units.NORM_BAND, "To a peak..."))
+
+    def norm_menu(self, menu):
+        """The plot's right-click "Normalise": none, each pattern 0 to 1,
+        all together 0 to 1, or to a peak - the one in force ticked, each
+        one undo step (`set_display`). It was one tick, for all together.
+        Built here, shown with its parent; held by the parent's wrapper
+        (`menu._norm`), as the Background submenu is."""
+        sub = menu.addMenu("Normalise")
+        menu._norm = sub
+        group = QActionGroup(sub)
+        group.setExclusive(True)
+        for norm, title in self.NORM_CHOICES:
+            action = sub.addAction(title)
+            action.setCheckable(True)
+            action.setChecked(self.doc.norm == norm)
+            action.setEnabled(norm == units.NORM_NONE or bool(self.doc.scans))
+            group.addAction(action)
+            if norm == units.NORM_BAND:
+                action.triggered.connect(
+                    lambda _c=False: self.ask_norm_band())
+            else:
+                action.triggered.connect(
+                    lambda _c=False, n=norm: self.set_display(norm=n))
+        return sub
 
     def ask_norm_band(self):
         """F3's "Normalise each pattern to a peak...": the peak's stretch

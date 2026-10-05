@@ -48,7 +48,8 @@ from PySide6.QtGui import (QColor, QFont, QFontMetrics, QFontMetricsF,
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ..core import figure as figure_module
-from ..core import labels, measure, model, numbers, profile, style, units
+from ..core import (crystal, labels, measure, model, numbers, profile, style,
+                    units)
 
 #: The ways this program draws.
 #:
@@ -5374,9 +5375,54 @@ class PlotWidget(QWidget):
             text += "   |   {}".format(trace.name)
             if trace.missing:
                 text += "   NO {}".format(trace.missing.upper())
-            elif trace.scan.offset:
-                text += "   offset {:+.5g} {}".format(
-                    trace.scan.offset, doc.unit_for(trace.scan))
+            else:
+                said = self.reflection_readout(trace.scan, pos)
+                if said:
+                    text += "   " + said
+                elif trace.scan.offset:
+                    text += "   offset {:+.5g} {}".format(
+                        trace.scan.offset, doc.unit_for(trace.scan))
+        return text
+
+    def reflections_under(self, scan, pos):
+        """The reflections of a simulated `scan` the pointer at `pos` is
+        over, nearest first: those it DRAWS (`Scan.drawn_reflections`)
+        within the pick distance along x - or, on a profile, within one
+        peak width, the reach of a drawn peak. [] for a measured one."""
+        sample = scan.sample
+        if not sample.simulated or self.doc is None:
+            return []
+        reach_px = self.pick_radius()
+        xs = np.array([self.px_to_x(pos.x() + step)
+                       for step in (-reach_px, 0.0, reach_px)])
+        angles = units.to_two_theta(xs, self.doc.x_quantity,
+                                    sample.wavelength)
+        if angles is None or not np.isfinite(angles[1]):
+            return []
+        sides = np.abs(angles - angles[1])
+        reach = float(np.nanmax(sides)) if np.isfinite(sides).any() else 0.0
+        if scan.drawing == crystal.DRAW_CURVE:
+            reach = max(reach, float(sample.sim_fwhm))
+        return crystal.reflections_near(scan.drawn_reflections(),
+                                        float(angles[1]), reach)
+
+    def reflection_readout(self, scan, pos):
+        """"(1 1 1) and 7 more: d = 3.135 A, 2-theta = 28.44 deg, I = 100;
+        also (2 0 0)" - which lattice plane the peak under the pointer
+        belongs to (MoloM's readout), or ""."""
+        near = self.reflections_under(scan, pos)
+        if not near:
+            return ""
+        first = near[0]
+        text = "{}{}d = {:.4g} A, {} = {:.4g} deg, I = {:.3g}".format(
+            first.name(), ": " if first.hkl else "reflection at ", first.d,
+            _X_SYMBOLS[units.TWO_THETA], first.two_theta, first.intensity)
+        others = [r.label() or "d = {:.4g} A".format(r.d) for r in near[1:]]
+        if others:
+            text += "; also {}{}".format(
+                ", ".join(others[:3]),
+                " and {} more".format(len(others) - 3)
+                if len(others) > 3 else "")
         return text
 
     def _move_readout(self):

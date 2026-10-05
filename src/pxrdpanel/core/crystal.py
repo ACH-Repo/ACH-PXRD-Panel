@@ -184,18 +184,55 @@ def _overfull_site_scale(site_occ, composition):
 # ------------------------------------------------------------ reflections
 class Reflection(object):
     """One reflection as drawn: its d, its angle at the wavelength asked
-    for, how strong (the strongest is 100), and its name."""
+    for, how strong (the strongest is 100), and its name.
 
-    __slots__ = ("d", "two_theta", "intensity", "hkl")
+    A CIF's reflection is MERGED (MoloM's `pxrd.compute`): every hkl that
+    lands at the same angle is one peak, `equivalents` lists them, and
+    their count is the multiplicity; `f2` is |F|^2 summed over them, `lp`
+    the Lorentz-polarisation factor. A card's has none of the three
+    (`equivalents` holds its own hkl, `f2` and `lp` are None)."""
 
-    def __init__(self, d, two_theta, intensity, hkl=None):
+    __slots__ = ("d", "two_theta", "intensity", "hkl", "equivalents", "f2",
+                 "lp")
+
+    def __init__(self, d, two_theta, intensity, hkl=None, equivalents=None,
+                 f2=None, lp=None):
         self.d = float(d)
         self.two_theta = float(two_theta)
         self.intensity = float(intensity)
         self.hkl = tuple(hkl) if hkl else None
+        self.equivalents = ([tuple(e) for e in equivalents] if equivalents
+                            else ([self.hkl] if self.hkl else []))
+        self.f2 = None if f2 is None else float(f2)
+        self.lp = None if lp is None else float(lp)
+
+    @property
+    def multiplicity(self):
+        """How many hkl land here; None for a card, which does not say."""
+        return len(self.equivalents) if self.f2 is not None else None
+
+    @property
+    def q(self):
+        """Q in 1/A: 2 pi / d, whatever the wavelength."""
+        return 2.0 * math.pi / self.d
+
+    @property
+    def absent(self):
+        """Allowed by the lattice, extinguished by the symmetry: |F|^2 is
+        (as good as) zero. Only a CIF's list holds these."""
+        return self.f2 is not None and self.f2 <= _pxrd.ABSENT_F2
 
     def label(self):
         return "({} {} {})".format(*self.hkl) if self.hkl else ""
+
+    def name(self):
+        """"(1 1 1) and 7 more": the plane, and how many others land with
+        it (MoloM's readout)."""
+        text = self.label()
+        count = self.multiplicity
+        if text and count and count > 1:
+            text += " and {} more".format(count - 1)
+        return text
 
 
 def two_theta_of(d, wavelength):
@@ -227,8 +264,7 @@ def simulate(pattern, wavelength, two_theta_range, fwhm=DEFAULT_FWHM):
                                  wavelength=float(wavelength),
                                  two_theta_range=(lo, hi))
         y = _pxrd.profile_at(computed, x, fwhm=fwhm)
-        found = [Reflection(r.d, r.two_theta, r.intensity, r.hkl)
-                 for r in computed.reflections]
+        found = [_from_molom(r) for r in computed.reflections]
         note = computed.note
     else:
         found = []
@@ -246,6 +282,54 @@ def simulate(pattern, wavelength, two_theta_range, fwhm=DEFAULT_FWHM):
             r.intensity = r.intensity * 100.0 / strongest
     found.sort(key=lambda r: -r.intensity)
     return x, y, found, note
+
+
+def _from_molom(r):
+    """A `Reflection` from one of MoloM's merged ones."""
+    return Reflection(r.d, r.two_theta, r.intensity, r.hkl,
+                      equivalents=r.equivalents, f2=r.f2, lp=r.lp)
+
+
+def reflection_list(pattern, wavelength, two_theta_range, absent=False):
+    """`(reflections, note)`: the hkl LIST of a simulated pattern over
+    `two_theta_range` at `wavelength`, ascending in angle, the strongest
+    100. For a CIF, `absent` adds the reflections the lattice allows and
+    the symmetry extinguishes (and the faint ones a pattern leaves out) -
+    what an hkl list is opened to see (MoloM's "Reflections (hkl)" tab). A
+    card's list is its own reflections in range."""
+    lo, hi = sorted(float(v) for v in two_theta_range)
+    lo = max(lo, 0.01)
+    hi = min(hi, 179.0)
+    if pattern.phase is not None:
+        phase = pattern.phase
+        computed = _pxrd.compute(phase.cell, phase.symbols, phase.frac,
+                                 occupancy=phase.occupancy,
+                                 wavelength=float(wavelength),
+                                 two_theta_range=(lo, hi),
+                                 keep_absent=bool(absent))
+        found = [_from_molom(r) for r in computed.reflections]
+        note = computed.note
+    else:
+        found = []
+        for d, intensity, hkl in pattern.reflections or ():
+            angle = two_theta_of(d, wavelength)
+            if angle is not None and lo <= angle <= hi:
+                found.append(Reflection(d, angle, intensity, hkl))
+        note = ""
+    strongest = max((r.intensity for r in found), default=0.0)
+    if strongest > 0:
+        for r in found:
+            r.intensity = r.intensity * 100.0 / strongest
+    found.sort(key=lambda r: r.two_theta)
+    return found, note
+
+
+def reflections_near(reflections, two_theta, reach):
+    """The reflections within `reach` degrees of `two_theta`, nearest
+    first: what the pointer is over, for the hover readout."""
+    near = [r for r in reflections if abs(r.two_theta - two_theta) <= reach]
+    near.sort(key=lambda r: abs(r.two_theta - two_theta))
+    return near
 
 
 def _profile(x, peaks, fwhm, eta=0.5):

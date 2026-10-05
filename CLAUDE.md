@@ -40,7 +40,10 @@ simulations, the analyses and the decorators' wording are PXRD's own.
    shown. Patterns of different wavelengths on one 2-theta axis are said
    (orange flash) and stamped on exports. Normalisation is allowed (a
    figure starts without; all together 0 to 1, each 0 to 1, or to a peak)
-   and the y caption says "(normalised)" whenever it is on.
+   and the y caption says "(normalised)" whenever it is on - the automatic
+   one. A caption the user TYPED is theirs and is never stamped over
+   (the "NORMALISED, and the y caption does not say so" stamp went on
+   2026-10-05, his word).
 5. **Python is exactly 3.10.0** (`C:\Program Files\Python310`). No `X | Y`
    annotations, no match statements.
 6. **No em-dashes, ASCII in source.** A plain `-`. PowerShell 5.1 reads a
@@ -96,6 +99,14 @@ simulations, the analyses and the decorators' wording are PXRD's own.
 | `ui/settings.py`, `ui/appearance.py`, `ui/colour.py`, `ui/numbox.py`, `ui/outliner.py`, `ui/palette.py`, `ui/loading.py` | as in IR-Panel |
 
 ## Traps paid for here
+
+* **A settings window's rows are ORDERED, not built in order**
+  (2026-10-05, family-wide): `_LiveDialog.FIRST_ROWS` / `LAST_ROWS` (or
+  `row_order()`, which `LabelSettings` overrides per kind) name rows by
+  label or "@attribute"; `_buttons` - every window's last call - moves
+  them (`order_rows`). A new row joins its window's list, or it lands in
+  the middle. The widgets are moved, not rebuilt: hiding a row means its
+  field AND `labelForField`.
 
 * **Every x position on the figure is in the axis's CURRENT quantity**
   (2-theta, d or Q): regions, marker lines, arrows, artists pinned to the

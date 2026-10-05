@@ -157,12 +157,14 @@ def test_a_peak_a_pattern_does_not_reach_says_so(document):
                for line in export.warnings_for(document))
 
 
-def test_a_retyped_caption_on_a_normalised_axis_is_a_warning(document):
+def test_a_typed_caption_on_a_normalised_axis_is_never_stamped(document):
+    """A caption the user typed is theirs: nothing is stamped on the
+    figure about what it says (Christian, 2026-10-05). It used to be
+    "NORMALISED, and the y caption does not say so"."""
     document.norm = units.NORM_GLOBAL
     document.axes["y"].label = "Intensity  /  counts"
-    assert any("NORMALISED" in line for line in export.warnings_for(document))
-    document.axes["y"].label = "Intensity (normalised)"
     assert not export.warnings_for(document)
+    assert document.axes["y"].caption(document) == "Intensity  /  counts"
 
 
 def test_a_change_of_normalisation_keeps_the_stack_in_order(document):
@@ -362,6 +364,66 @@ def test_a_simulation_can_be_sticks_ticks_or_lines(document):
     assert len(x) == 2 and np.all(np.isnan(y))
     assert scan.missing_for(doc) is None
     assert scan.factor(doc.y_key()) is None
+
+
+def bcc_sample(a=2.8665):
+    """A crystal as `crystal.load_cif` returns one, built by hand: one kind
+    of atom at 0,0,0 and 1/2,1/2,1/2 of a cubic cell (body-centred), whose
+    absences (h + k + l odd) and multiplicities are textbook."""
+    from pxrdpanel.core._molom.cif import Cell
+    phase = crystal.Phase(Cell(a, a, a), ["Fe", "Fe"],
+                          [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]], [1.0, 1.0],
+                          title="bcc")
+    pattern = readers.Pattern(source=None, kind="cif", phase=phase)
+    sample = model.Sample("C:/nowhere/bcc.cif", pattern)
+    sample.wavelength_override = CU
+    sample.sim_range = (20.0, 100.0)
+    return sample
+
+
+def test_a_cifs_reflections_say_their_planes_and_multiplicity():
+    sample = bcc_sample()
+    first = min(sample.reflections(), key=lambda r: r.two_theta)
+    assert first.hkl == (1, 1, 0)
+    assert first.multiplicity == 12              # {110}: twelve planes
+    assert first.name() == "(1 1 0) and 11 more"
+    assert first.q == pytest.approx(2 * math.pi / first.d)
+    assert first.f2 > 0 and first.lp > 0 and not first.absent
+    # (1 0 0) is extinguished by the body centring: not in the pattern...
+    listed, note = sample.reflection_list()
+    names = [r.hkl for r in listed]
+    assert (1, 0, 0) not in names and (1, 1, 0) in names
+    assert [r.two_theta for r in listed] == sorted(r.two_theta
+                                                    for r in listed)
+    assert max(r.intensity for r in listed) == pytest.approx(100.0)
+    assert "displacement" in note
+    # ...and in the list once the absences are asked for, said absent
+    with_absent, _note = sample.reflection_list(absent=True)
+    absent = [r for r in with_absent if r.absent]
+    assert (1, 0, 0) in [r.hkl for r in absent]
+    assert all(sum(r.hkl) % 2 for r in absent)   # h + k + l odd, all of them
+
+
+def test_a_cards_reflections_have_no_multiplicity(document):
+    scan = _card_sample(document)
+    first = scan.sample.reflections()[0]
+    assert first.hkl == (1, 1, 0) and first.multiplicity is None
+    assert first.name() == "(1 1 0)" and not first.absent
+    listed, note = scan.sample.reflection_list(absent=True)
+    assert len(listed) == 3 and note == ""
+
+
+def test_the_reflections_drawn_follow_the_drawing(document):
+    scan = _card_sample(document)
+    assert len(scan.drawn_reflections()) == 3
+    scan.draw_as = crystal.DRAW_STICKS
+    scan.strongest = 2
+    assert [r.hkl for r in scan.drawn_reflections()] == [(1, 1, 0),
+                                                         (2, 0, 0)]
+    near = crystal.reflections_near(scan.drawn_reflections(),
+                                    scan.drawn_reflections()[1].two_theta
+                                    + 0.05, 0.1)
+    assert [r.hkl for r in near] == [(2, 0, 0)]
 
 
 # --------------------------------------------------------------- arrange

@@ -74,7 +74,8 @@ New for PXRD (details in `CLAUDE.md` and the module docstrings):
 ## 3. Open for Christian
 
 - **Use it** on real figures and collect requests in `docs/PLAN.md`.
-- **Git**: initialise, and push to `ACH-Repo/ACH-PXRD-Panel`? (Not done.)
+- ~~Git~~ Done: public on GitHub as `ACH-Repo/ACH-PXRD-Panel` since
+  2026-10-05.
 - **The name** (with the family's: Stackline was suggested).
 - ~~Edge labels on the left?~~ Settled 2026-10-02: name labels hang
   below each pattern's right end (`Ctrl+T`, and "Label every pattern on

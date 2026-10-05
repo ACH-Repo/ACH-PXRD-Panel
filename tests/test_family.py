@@ -554,3 +554,64 @@ def test_a_white_page_darkens_only_the_default_palette(stack_window):
     with plot_module.themed(window.plot, plot_module.THEME_LIGHT):
         trace = window.plot._trace_of(scan)
         assert plot_module.trace_colour(trace).name() == chosen
+
+
+# ---------------------------------- settings windows: what comes first
+def _rows(dialog):
+    """The rows of a settings window as shown, top to bottom: each row's
+    label, else its check box's text; hidden rows left out."""
+    from PySide6.QtWidgets import QAbstractButton, QFormLayout
+    form = dialog.findChildren(QFormLayout)[0]
+    out = []
+    for row in range(form.rowCount()):
+        label = form.itemAt(row, QFormLayout.LabelRole)
+        field = (form.itemAt(row, QFormLayout.FieldRole)
+                 or form.itemAt(row, QFormLayout.SpanningRole))
+        widget = field.widget() if field is not None else None
+        if widget is not None and widget.isHidden():
+            continue
+        if label is not None and label.widget().text():
+            out.append(label.widget().text())
+        elif isinstance(widget, QAbstractButton):
+            out.append(widget.text())
+        else:
+            out.append("")
+    return out
+
+
+def test_settings_windows_put_the_text_and_the_colour_first(stack_window):
+    """A label's, a note's and a band marker's window: its text first;
+    a marker's line position next; then the colour; Layer last. A band
+    marker has no arrow rows, and a label's arrow rows show only once it
+    is a note (Christian, 2026-10-05)."""
+    window = stack_window
+    plot = window.plot
+    rect = plot.plot_rect()
+    window.doc.select_all(False)
+    middle = QPointF(rect.center().x(), rect.center().y())
+    label = window.add_label(text="a label", at=middle)
+    note = window.add_note(text="a note", at=middle)
+    marker = window.add_marker_line(text="a marker", at=middle)
+    shown = {}
+    for obj in (label, note, marker):
+        window.edit_object(obj)
+        shown[obj] = window._dialogs[-1]
+    marker_rows = _rows(shown[marker])
+    assert marker_rows[:3] == ["Text", "Line at", "Colour"]
+    assert marker_rows[-1] == "Layer"
+    for gone in ("Points at", "Arrow from", "Arrow colour"):
+        assert gone not in marker_rows
+    assert not any(row.startswith("Leader") for row in marker_rows)
+    note_rows = _rows(shown[note])
+    assert note_rows[:2] == ["Text", "Colour"]
+    assert note_rows.index("Points at") < note_rows.index("Size")
+    assert note_rows[-1] == "Layer"
+    dialog = shown[label]
+    label_rows = _rows(dialog)
+    assert label_rows[:2] == ["Text", "Colour"]
+    assert "Points at" not in label_rows
+    dialog.leader.setChecked(True)                  # a note now
+    assert "Points at" in _rows(dialog)
+    assert _rows(dialog)[-1] == "Layer"
+    for dialog in shown.values():
+        dialog.close()
