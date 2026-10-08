@@ -93,12 +93,47 @@ simulations, the analyses and the decorators' wording are PXRD's own.
 | `core/export.py` | CSV, and the export warnings (no driver export: decided for the family) |
 | `core/profile.py` | what is particular to PXRD: F staged, a d axis reversed, the d fit, rounded ends, new files stacked, the background |
 | `core/ops.py` | the operator registry (copied from MoloM via Triplot) |
+| `core/userops.py` | F3's memory, the user's: the operators used last, aliases of their own, the shared alias file, the factory reset (`operators.json` beside the preferences) |
 | `ui/plot.py` | the painted plot: view, the reversed and broken x axis, gestures, picking, drawing (`_paint_lines` for a simulation as lines) |
 | `ui/window.py` | operators (`set_x_quantity`, `ask_wavelength`, `set_drawing`), menus, docks, drops, exports, undo |
 | `ui/dialogs.py` | every settings window; `PatternRows` (wavelength, simulation, draw mode); `RegionSettings`, `SpanSettings`, `BreakDialog` |
 | `ui/settings.py`, `ui/appearance.py`, `ui/colour.py`, `ui/numbox.py`, `ui/outliner.py`, `ui/palette.py`, `ui/loading.py` | as in IR-Panel |
 
 ## Traps paid for here
+
+* **A file a session cannot read is KEPT** (2026-10-08, family-wide;
+  `model.MissingSource` in `doc.missing`): its entry, its curves' entries
+  and the labels hanging from them, each with its place in the file.
+  `session._keep_missing` puts them back into EVERY `to_state` (so a save
+  and `is_modified` see them) and moves the colour links, span ends and a
+  region's curves to match. A colour link, a span's ends and a label name
+  things by their PLACE in the file, so `from_state` restores links through
+  `_saved_target` (places in the file), never through the document's
+  lists. Finding the file (`MainWindow.found_sources`) is
+  `from_state(to_state(doc), found={saved path: new path})`: the figure
+  opened again, the undo history cleared, changed until saved. The look
+  beside a session stays by EXACT name; a name merely alike
+  (`similar_files`: 0.85, a copy's "(1)" first, then the same numbers) is
+  only OFFERED - "Run-1" is as alike to "Run-2" as to "Run-1(1)".
+
+* **The source file changes through the WINDOW, after the settings
+  window closes** (2026-10-05, family-wide; `SourceRow`,
+  `_LiveDialog._source_chosen`): `change_source` replaces the sample's
+  whole `__dict__`, so a window left open would show the old file's rows
+  and its Revert would write old values onto the new file. It accepts
+  (its own undo step lands first), the source changes (its own step),
+  and the window opens again. `clean_path` takes the quotes of "Copy as
+  path" off.
+
+* **F3's memory is the USER's, in `operators.json`** (2026-10-05,
+  family-wide; `core/userops.py`): the recent list and the aliases, beside
+  `preferences.json`, written at every change. It is read again whenever
+  the preferences path moves (`userops._ensure`), which is how every test
+  gets an empty one from conftest's `own_preferences`. A shared alias file
+  is known by its CONTENTS (`"format": "operator-aliases"`), never by its
+  name: any other `.json` dropped goes on to the readers. Aliases are
+  stored by operator ID - renaming an id orphans them (they are kept, and
+  find nothing).
 
 * **A settings window's rows are ORDERED, not built in order**
   (2026-10-05, family-wide): `_LiveDialog.FIRST_ROWS` / `LAST_ROWS` (or
@@ -506,13 +541,13 @@ simulations, the analyses and the decorators' wording are PXRD's own.
   first tenth of the x axis empty. It was % of the data's range until
   preferences version 2 / session version 6, which `style.convert_old_fit`
   converts. Read both of an axis's through `PlotWidget.fit_pads`.
-* **A white page darkens only the default palette** (`paper_colour`,
-  family-wide 2026-10-02): `model.PALETTE` is chosen for a dark ground and
-  is brought down to `PAPER_LUMA` on white; any other colour - picked,
-  typed as hex, a gradient's - is drawn exactly as chosen. `for_light`
-  itself still darkens everything: the handling colours (`ACCENTS`) go
-  through it in `set_theme`, so never call it for an object's colour. A
-  golden yellow came out olive on an export until then (Christian).
+* **A white page draws every object colour as on the screen**
+  (`paper_colour`, family-wide 2026-10-07): the default palette too.
+  2026-10-02 still darkened `model.PALETTE` to `PAPER_LUMA` on white, and
+  its orange came out brown in every export (a picked golden yellow had
+  come out olive before that); Christian chose the screen colours as they
+  are. `for_light` darkens the handling colours (`ACCENTS`) in
+  `set_theme` and nothing else: never call it for an object's colour.
 * **The handling colours are not the ink** (`plot.ACCENTS`): the reticle,
   band and selection follow the document's theme even when the page flips
   the ink to the other family. `set_theme(drawing, accent=doc.theme)`.

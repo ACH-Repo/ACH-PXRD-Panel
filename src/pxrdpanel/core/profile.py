@@ -73,3 +73,23 @@ def name_label_corner(_doc=None):
     `MainWindow.name_labels`): below the curve's right end - the peaks
     stand up from it, and the high-angle end is the quiet one."""
     return "lower right"
+
+
+def details(sample):
+    """`[(what, value), ...]`: what `sample`'s file says of itself, for
+    "Details..." - the facts that tell two files of one name apart."""
+    import numpy as np
+    pattern = sample.pattern
+    rows = [("Wavelength", sample.wavelength_text())]
+    for key, value in sorted((getattr(pattern, "head", None) or {}).items()):
+        if value not in (None, ""):
+            rows.append((str(key)[:1].upper() + str(key)[1:], str(value)))
+    if getattr(pattern, "kind", ""):
+        rows.append(("Read as", pattern.kind))
+    if not sample.simulated and pattern.x is not None:
+        x = np.asarray(pattern.x, dtype=float)
+        rows.append(("Points", str(len(x))))
+        if len(x):
+            rows.append(("2-theta", "{:g} - {:g}".format(
+                float(np.nanmin(x)), float(np.nanmax(x)))))
+    return rows

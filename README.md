@@ -154,7 +154,7 @@ matplotlib's mathtext takes it.
 | `Ctrl+B` | add a marker line |
 | `H` / `Alt+H` | hide the selection / show everything |
 | `N` | show or hide the outliner |
-| `F3` | **operator search**: everything, filtered by what is selected |
+| `F3` | **operator search**: everything, filtered by what is selected; the ones used last on top, Enter repeats the newest; right-click one for an alias of your own |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo, including zoom, pan and fit |
 | `Ctrl+S` / `Ctrl+E` | save the session / export the figure |
 | `Ctrl+,` | settings: the house style, for every figure and for this one |
@@ -180,9 +180,12 @@ settings have identical axes boxes.
 | CSV | the curves as drawn, one x/y column pair per pattern |
 
 Sessions (`.pxrdpanel`) keep the files' paths and a compressed copy of each
-file, the arrangement, the x axis and every decorator: a file that was
-moved is looked for beside the session, and failing that its copy is read.
-Style presets (`.pxrdstyle`) keep a figure's look.
+file, the arrangement, the x axis and every decorator: a file that was moved
+is looked for beside the session, and failing that its copy is read; a file
+found nowhere stays in the outliner, MISSING, kept with all it had, and a
+right-click looks for it (Locate..., Find in a folder...). Details... on a
+file's right-click menu tells apart two files of one name. Style presets
+(`.pxrdstyle`) keep a figure's look.
 
 ## The Start Menu and aliases
 

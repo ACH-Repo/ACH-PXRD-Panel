@@ -118,23 +118,29 @@ class OperatorRegistry:
                 seen.setdefault(key, []).append(op.id)
         return {k: v for k, v in seen.items() if len(v) > 1}
 
-    def search(self, text, ctx):
-        # type: (str, object) -> List[Tuple[Operator, bool]]
+    def search(self, text, ctx, extra=None):
+        # type: (str, object, Optional[dict]) -> List[Tuple[Operator, bool]]
         """Filter + rank for the F3 dialog. Returns (op, enabled) pairs:
-        substring match on label/category/id (case-insensitive, all words
-        must match), enabled ops first, then label-prefix matches, then
+        substring match on label/category/id/aliases (case-insensitive,
+        all words must match), enabled ops first, then those with an alias
+        of the USER's (`extra`, `{id: [alias, ...]}`, `core/userops.py`)
+        that starts with what was typed, then label-prefix matches, then
         registration order."""
         words = [w for w in (text or "").lower().split() if w]
+        typed = " ".join(words)
+        extra = extra or {}
         out = []
         for k, op in enumerate(self._ops):
+            own = tuple(a.lower() for a in extra.get(op.id, ()))
             hay = " ".join((op.label, op.category, op.id)
-                           + op.aliases).lower()
+                           + op.aliases + own).lower()
             if all(w in hay for w in words):
                 en = op.enabled(ctx)
+                mine = bool(typed) and any(a.startswith(typed) for a in own)
                 prefix = op.label.lower().startswith(words[0]) if words else False
-                out.append((not en, not prefix, k, op, en))
-        out.sort(key=lambda t: t[:3])
-        return [(op, en) for _e, _p, _k, op, en in out]
+                out.append((not en, not mine, not prefix, k, op, en))
+        out.sort(key=lambda t: t[:4])
+        return [(op, en) for _e, _m, _p, _k, op, en in out]
 
 
 def chord_variants(key):

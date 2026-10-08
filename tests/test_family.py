@@ -538,22 +538,24 @@ def test_the_pick_distance_is_8_until_chosen(stack_window):
 
 
 # ------------------------------------------------- colours on a white page
-def test_a_white_page_darkens_only_the_default_palette(stack_window):
-    """The screen palette is chosen for a dark ground and is darkened on
-    white; a colour somebody chose is drawn exactly as chosen."""
+def test_a_white_page_draws_every_colour_as_on_screen(stack_window):
+    """The default palette and a colour somebody chose alike: drawn on a
+    white page - and so in every export - exactly as on the screen.
+    Darkened to read on paper, the palette's orange came out brown."""
     import sys
     window = stack_window
     plot_module = _plot_module(window.plot)
     palette = sys.modules[type(window.doc).__module__].PALETTE
     chosen = "#ffc000"
-    assert plot_module.paper_colour(chosen).name() == chosen
-    assert plot_module.paper_colour(palette[1]).name() != palette[1]
+    for colour in (chosen,) + tuple(palette):
+        assert plot_module.paper_colour(colour).name() == colour.lower()
     scan = window.doc.scans[0]
-    scan.colour = chosen
-    window.refresh()
-    with plot_module.themed(window.plot, plot_module.THEME_LIGHT):
-        trace = window.plot._trace_of(scan)
-        assert plot_module.trace_colour(trace).name() == chosen
+    for colour in (chosen, palette[1]):
+        scan.colour = colour
+        window.refresh()
+        with plot_module.themed(window.plot, plot_module.THEME_LIGHT):
+            trace = window.plot._trace_of(scan)
+            assert plot_module.trace_colour(trace).name() == colour.lower()
 
 
 # ---------------------------------- settings windows: what comes first
@@ -615,3 +617,258 @@ def test_settings_windows_put_the_text_and_the_colour_first(stack_window):
     assert _rows(dialog)[-1] == "Layer"
     for dialog in shown.values():
         dialog.close()
+
+
+# ------------------------------------------- F3: used last, your aliases
+def _palette_rows(palette):
+    """`(text, op id or None)` of every row of the F3 list."""
+    from PySide6.QtCore import Qt
+    rows = []
+    for row in range(palette.list.topLevelItemCount()):
+        item = palette.list.topLevelItem(row)
+        rows.append((item.text(0), item.data(0, Qt.UserRole)))
+    return rows
+
+
+def test_f3_lists_the_operators_used_last_on_top(stack_window):
+    """Opened empty, F3 lists the operators run from it last on top, the
+    newest selected, so F3 then Enter runs it again (Christian,
+    2026-10-05)."""
+    from PySide6.QtCore import Qt
+    window = stack_window
+    palette = window.operator_palette()
+    assert palette.RECENT_TITLE not in [t for t, _i in _palette_rows(palette)]
+    window.palette_ran("select.all")
+    window.palette_ran("view.fit")
+    palette = window.operator_palette()
+    rows = _palette_rows(palette)
+    assert rows[0] == (palette.RECENT_TITLE, None)
+    assert [i for _t, i in rows[1:3]] == ["view.fit", "select.all"]
+    assert rows[3] == (palette.ALL_TITLE, None)
+    assert "view.fit" not in [i for _t, i in rows[4:]]   # listed once
+    assert palette.list.currentItem().data(0, Qt.UserRole) == "view.fit"
+    palette.edit.setText("fit")                     # typing: no heading
+    assert palette.RECENT_TITLE not in [t for t, _i in _palette_rows(palette)]
+
+
+def test_your_own_alias_finds_an_operator_and_travels_in_a_file(
+        stack_window, tmp_path):
+    """An alias of the user's own finds its operator and is shown beside
+    it; saved to a .json it installs into another installation (here,
+    after a reset to factory) by dropping the file on the window, asked
+    first; an operator the panel does not have is skipped."""
+    import json
+    from PySide6.QtCore import QMimeData, QPointF, Qt, QUrl
+    from PySide6.QtGui import QDropEvent
+    window = stack_window
+    palette = window.operator_palette()
+    fit = window.ops.get("view.fit")
+    assert palette.add_alias(fit, "  zoom   home ") == "zoom home"
+    palette.edit.setText("zoom home")
+    current = palette.list.currentItem()
+    assert current.data(0, Qt.UserRole) == "view.fit"
+    assert current.text(1) == "zoom home"
+    menu = palette.menu_for(current)
+    assert [a.text() for a in menu.actions()][-1] == \
+        'Remove my alias "zoom home"'
+    shared = window.save_aliases(path=str(tmp_path / "mine.json"))
+    window.palette_ran("view.fit")
+    window.confirm_reset = lambda: True
+    assert window.reset_operator_search()
+    palette = window.operator_palette()
+    palette.edit.setText("zoom home")
+    assert palette.list.currentItem() is None or \
+        palette.list.currentItem().data(0, Qt.UserRole) != "view.fit"
+    assert palette.RECENT_TITLE not in [
+        t for t, _i in _palette_rows(window.operator_palette())]
+    # somebody's file, with one operator this panel does not have
+    with open(shared, encoding="utf-8") as fh:
+        stored = json.load(fh)
+    stored["aliases"]["no.such.operator"] = ["nothing"]
+    with open(shared, "w", encoding="utf-8") as fh:
+        json.dump(stored, fh)
+    asked = []
+    window.confirm_aliases = (
+        lambda path, app, added, unknown:
+        asked.append((added, unknown)) or True)
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(shared)])
+    drop = QDropEvent(QPointF(10, 10), Qt.CopyAction, mime, Qt.LeftButton,
+                      Qt.NoModifier)
+    window.dropEvent(drop)
+    assert asked == [([("view.fit", "zoom home")], ["no.such.operator"])]
+    palette = window.operator_palette()
+    palette.edit.setText("zoom home")
+    assert palette.list.currentItem().data(0, Qt.UserRole) == "view.fit"
+    # dropped again: nothing new, nothing asked
+    window.dropEvent(QDropEvent(QPointF(10, 10), Qt.CopyAction, mime,
+                                Qt.LeftButton, Qt.NoModifier))
+    assert len(asked) == 1
+
+
+# --------------------------------- the source file, typed in its settings
+def test_a_path_pasted_with_quotes_changes_the_source_file(stack_window,
+                                                           tmp_path):
+    """A file's window, and a curve's, take another path typed or pasted
+    as Windows copies it (in quotes) and put that file in its place
+    ("Change the source file"): the window closes first, so its own undo
+    step comes before the change, and opens again on the new file. A path
+    that is not a file is marked and does nothing (Christian,
+    2026-10-05)."""
+    import os
+    from importlib import import_module
+    window = stack_window
+    dialogs = import_module(type(window).__module__.rsplit(".", 1)[0]
+                            + ".dialogs")
+    assert dialogs.clean_path('  "C:\\data\\a b.txt" ') == os.path.normpath(
+        "C:/data/a b.txt")
+    assert dialogs.clean_path("'C:/data/x.txt'") == os.path.normpath(
+        "C:/data/x.txt")
+    assert dialogs.clean_path("") == ""
+    other = tmp_path / "another file.dat"
+    other.write_text("not read here")
+    changed = []
+    window.change_source = lambda sample, path: changed.append(
+        (sample, path))
+    scan = window.doc.scans[0]
+    sample = scan.sample
+    for obj in (sample, scan):
+        window.edit_object(obj)
+        dialog = window._dialogs[-1]
+        row = dialog.file_row
+        assert row.path.text() == sample.path
+        row.path.setText(str(tmp_path / "missing.dat"))
+        row.path.editingFinished.emit()
+        assert changed == [] and "d04040" in row.path.styleSheet()
+        row.path.setText('"{}"'.format(other))       # as Ctrl+Shift+C copies
+        assert row.path.text() == str(other)
+        row.path.editingFinished.emit()
+        assert changed == [(sample, os.path.normpath(str(other)))]
+        assert not dialog.isVisible()
+        reopened = window._dialogs[-1]
+        assert reopened is not dialog and reopened.obj is obj
+        reopened.close()
+        del changed[:]
+
+
+# --------------------------------------- a file the session cannot find
+def _stand_ins(window, folder):
+    """The window's files written into `folder` as "Measurement-k" (their
+    extensions kept), each holding its number, and a reader that reads it:
+    a copy of that sample. Returns the reader."""
+    import copy
+    import os
+    samples = list(window.doc.samples)
+    folder.mkdir()
+    for k, sample in enumerate(samples):
+        ext = os.path.splitext(sample.path)[1]
+        sample.path = str(folder / "Measurement-{}{}".format(k, ext))
+        with open(sample.path, "w") as fh:
+            fh.write(str(k))
+
+    def read(where):
+        with open(where) as fh:                 # raises when it is not there
+            twin = copy.copy(samples[int(fh.read())])
+        twin.path, twin.scans = str(where), []
+        return twin
+
+    return read
+
+
+def test_a_missing_file_is_kept_and_found_again(stack_window, tmp_path,
+                                                monkeypatch):
+    """A file a session cannot find keeps a row in the outliner, and what
+    the session holds of it - its curves, their analyses, the labels on
+    them - is saved again as it was; found under a folder by a name like
+    its own (a copy's "(1)" ranked before another run's number), the
+    figure opens again with all of it back."""
+    import json
+    import os
+    import sys
+    window = stack_window
+    package = type(window.doc).__module__.split(".")[0]
+    session = sys.modules[package + ".core.session"]
+    model = sys.modules[package + ".core.model"]
+    loader = sys.modules[package + ".core.loader"]
+    monkeypatch.setattr(loader, "read_sample",
+                        _stand_ins(window, tmp_path / "data"))
+    doc = window.doc
+    first = [s for s in doc.scans if s.sample is doc.samples[0]]
+    others = [s for s in doc.scans if s.sample is not doc.samples[0]]
+    doc.add_label("on the first", 0.5, 0.5, first[0])
+    doc.add_label("free", 0.2, 0.2)
+    others[-1].colour_from = others[0]               # a link after the gap
+    window.refresh()
+    path = str(tmp_path / "figure.session")
+    window.save_session(path=path)
+    with open(path, encoding="utf-8") as fh:
+        saved = json.load(fh)
+    lost = doc.samples[0].path
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    stem, ext = os.path.splitext(os.path.basename(lost))
+    copied = str(elsewhere / "{}(1){}".format(stem, ext))  # a download's
+    os.rename(lost, copied)
+
+    window.open_session(path)
+    doc = window.doc
+    assert [g.name for g in doc.missing] == [os.path.basename(lost)]
+    gone = doc.missing[0]
+    assert len(doc.samples) == len(saved["samples"]) - 1
+    assert len(doc.scans) == len(others)
+    assert [lb.text for lb in doc.labels] == ["free"]
+    assert gone.scans and [e["text"] for _p, e in gone.labels] == [
+        "on the first"]
+    assert doc.scans[-1].colour_from is doc.scans[0]   # the right objects
+    rows = [item for item in window.outliner._items()
+            if window.outliner._object(item) is gone]
+    assert rows and rows[0].text(0) == gone.name
+    menu = [a.text() for a in window.context_menu_for(gone).actions()]
+    assert any(t.startswith("Locate") for t in menu)
+    assert "Find in a folder..." in menu and "Details..." in menu
+    facts = dict(window.details_dialog(gone).rows)
+    assert facts["File"] == gone.name and facts["Why"] == "not found"
+    facts = dict(window.details_dialog(doc.samples[0]).rows)
+    assert "Size" in facts and len(facts["SHA-256"]) == 64
+
+    # Saved now, it is all still there, where it was.
+    again = session.to_state(doc)
+    for key in ("samples", "scans", "labels", "colour_links"):
+        assert again[key] == saved[key], key
+    assert not window.is_modified()
+
+    # Forgotten, it is gone from the next save; undone, back.
+    window.forget_missing(gone)
+    assert doc.missing == [] and len(session.to_state(doc)["samples"]) == \
+        len(saved["samples"]) - 1
+    window.undo.undo()
+    assert doc.missing == [gone]
+
+    # Looked for under the folder: the copy is offered first, then the
+    # other runs ("Measurement-1" is as like "Measurement-0").
+    hits, complete = session.similar_files(str(tmp_path), [gone.path])
+    assert complete
+    assert [os.path.basename(p) for _s, p in hits[gone.path]][:1] == [
+        os.path.basename(copied)]
+    assert len(hits[gone.path]) == len(saved["samples"])
+    offered = []
+
+    def take_first(folder, found, stopped=""):
+        offered.append(found)
+        return dict((saved_path, hits_of[0][1])
+                    for _name, saved_path, hits_of in found if hits_of)
+
+    window.choose_found = take_first
+    assert window.find_sources(str(tmp_path)) == [os.path.basename(lost)]
+    doc = window.doc
+    assert doc.missing == [] and len(doc.scans) == len(saved["scans"])
+    back = [s for s in doc.samples if s.path == copied]
+    assert len(back) == 1 and len(back[0].scans) == len(first)
+    owned = [lb for lb in doc.labels if lb.text == "on the first"]
+    assert owned and owned[0].scan.sample is back[0]
+    assert isinstance(doc.missing, list) and window.is_modified()
+    again = session.to_state(doc)
+    assert [e["path"] for e in again["samples"]] == [copied] + [
+        e["path"] for e in saved["samples"][1:]]
+    assert again["colour_links"] == saved["colour_links"]
+    assert issubclass(type(gone), model.MissingSource)

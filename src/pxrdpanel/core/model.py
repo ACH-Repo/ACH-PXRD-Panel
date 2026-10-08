@@ -1169,19 +1169,62 @@ def colour_links(doc):
     return links
 
 
-def restore_colour_links(doc, links):
-    """The links of a session, where both ends are still there."""
+def restore_colour_links(doc, links, target=None):
+    """The links of a session, where both ends are still there. `target`,
+    when given, finds what a `[list, position]` names (a session with a
+    missing file finds its curves at other places than it saved them)."""
+    target = target or (lambda ref: _colour_target(doc, ref))
     for pair in links or ():
         try:
             first, second = pair
         except (TypeError, ValueError):
             continue
-        follower = _colour_target(doc, first)
-        donor = _colour_target(doc, second)
+        follower = target(first)
+        donor = target(second)
         if (follower is None or donor is None
                 or inherits_from(donor, follower)):
             continue
         follower.colour_from = donor
+
+
+class MissingSource(object):
+    """A file a session names that could not be read when it was opened.
+
+    Kept AS THE SESSION HAD IT - the file's entry, the entries of its
+    curves and of the labels hanging from them - so that saving the figure
+    loses none of it, and finding the file (`session.from_state` with
+    `found`) brings all of it back. Shown in the outliner under the file's
+    name; never drawn, never selected."""
+
+    kind = "missing"
+
+    def __init__(self, path, entry, reason=""):
+        self.path = str(path)
+        #: The session's entry for the file.
+        self.entry = dict(entry or {})
+        #: Why it was not read (the reader's words, or "not found").
+        self.reason = str(reason)
+        #: Its place among the session's files.
+        self.index = 0
+        #: `[(place, entry), ...]`: its curves, where the session had them.
+        self.scans = []
+        #: `[(place, entry), ...]`: the labels hanging from its curves.
+        self.labels = []
+
+    @property
+    def name(self):
+        """The file's name, as the session knew it."""
+        return os.path.basename(self.path.replace("\\", "/")) or self.path
+
+    @property
+    def found_nowhere(self):
+        """True when there is no file at the path at all (rather than one
+        that could not be read)."""
+        return not os.path.isfile(self.path)
+
+    def analysis_count(self):
+        return sum(len(entry.get("analyses") or ())
+                   for _place, entry in self.scans)
 
 
 class Document(object):
@@ -1189,6 +1232,8 @@ class Document(object):
 
     def __init__(self):
         self.samples = []
+        #: Files the session named that could not be read (`MissingSource`).
+        self.missing = []
         self.scans = []
         #: The key, off until it is asked for.
         self.legend = Legend(self._next_id())

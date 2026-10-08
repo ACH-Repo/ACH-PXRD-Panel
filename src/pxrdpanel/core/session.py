@@ -8,7 +8,9 @@ it is, what the axes show, where every label, marker line and region is.
 **The measurements themselves are NOT copied in.** A session stores paths
 and reads the files again, which keeps a session small and keeps one copy of
 the data on disk. A file that has moved is reported by name instead of
-failing the whole load. An analysis is stored as its model and interval and
+failing the whole load, and what the session held of it is KEPT
+(`model.MissingSource`): saved again as it was, and back on the figure once
+the file is found. An analysis is stored as its model and interval and
 MEASURED AGAIN on load - a session keeps the arrangement, never a copy of
 the numbers.
 
@@ -17,10 +19,14 @@ imports the reader or a window and is testable with a stub.
 """
 
 import base64
+import difflib
+import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
+import time
 import zlib
 
 from . import crystal
@@ -139,7 +145,9 @@ def _restore_analysis(analysis, saved):
 # A session names its files by path. Moved, a file is looked for BESIDE THE
 # SESSION (its folder and the folders under it, by name), and where the
 # panel keeps copies (`profile.EMBED_SOURCES`) the copy inside the session is
-# read when it is nowhere to be found - and the opening says which.
+# read when it is nowhere to be found - and the opening says which. A file
+# found by none of these is KEPT (`model.MissingSource`) until the user
+# finds it: by hand, or under a folder by a name like it (`similar_files`).
 
 def _source_copy(sample):
     """The copy a session keeps of a sample's file - zlib, then base64 - or
@@ -163,7 +171,7 @@ def _look_beside(session_path, wanted):
     """A file named as `wanted` is, in the session's folder or a folder
     under it, or None."""
     name = os.path.basename(str(wanted).replace("\\", "/")).lower()
-    if not name:
+    if not name or not session_path:
         return None
     folder = os.path.dirname(os.path.abspath(session_path))
     seen = 0
@@ -178,21 +186,155 @@ def _look_beside(session_path, wanted):
     return None
 
 
-def _read_entry(entry, session_path, read_sample, notes, relocated):
-    """One of a session's files: where it was; else beside the session;
+#: How alike a file's name must be to the one a session knows for a search
+#: under a folder to offer it (`similar_files`): difflib's ratio of the two
+#: names without their extensions, case ignored. "Run-A(1)" and "Run-A" are
+#: 0.92 alike - and so are "Run-1" and "Run-2", which is why such a file is
+#: only ever OFFERED, never taken by itself.
+SIMILAR = 0.85
+#: How many file names a search under a folder reads, at most.
+FIND_LIMIT = 200000
+
+#: What Windows and a browser add to a copy's name: "x (2)", "x(1)",
+#: "x - Copy", "x - Kopie (3)".
+_COPY_MARKS = re.compile(
+    r"(\s*\(\d+\)|\s*-\s*(copy|kopie|copie|copia|kopia)(\s*\(\d+\))?)+$",
+    re.IGNORECASE)
+
+
+def _name_parts(path):
+    stem, ext = os.path.splitext(os.path.basename(
+        str(path).replace("\\", "/")))
+    return stem.lower(), ext.lower()
+
+
+def similar_files(folder, wanted, cutoff=SIMILAR, limit=FIND_LIMIT):
+    """The files under `folder` named like the paths in `wanted`:
+    `({path: [(score, found), ...]}, complete)`. A file must have the same
+    extension, and its name without it be at least `cutoff` alike
+    (`SIMILAR`; the same name scores 1) - or be the same name but for the
+    marks of a copy ("x (1)", "x - Copy"). The likeliest come first: the
+    same name, then a copy's, then a name with the same NUMBERS in it,
+    then the rest by score - "Run-2" is as like "Run-1" as "Run-1(1)" is,
+    and is another run. `complete` is False when the search stopped after
+    `limit` names."""
+    targets = []
+    for path in wanted:
+        stem, ext = _name_parts(path)
+        targets.append((path, stem, ext, _COPY_MARKS.sub("", stem),
+                        re.findall(r"\d+", stem)))
+    hits = dict((path, []) for path in wanted)
+    seen, complete = 0, True
+    for base, dirs, files in os.walk(str(folder)):
+        dirs.sort()
+        for name in files:
+            stem, ext = _name_parts(name)
+            for path, want, want_ext, want_core, numbers in targets:
+                if ext != want_ext:
+                    continue
+                match = difflib.SequenceMatcher(None, want, stem)
+                if stem == want:
+                    score, rank = 1.0, 3
+                elif _COPY_MARKS.sub("", stem) == want_core:
+                    score, rank = match.ratio(), 2
+                else:
+                    if (match.real_quick_ratio() < cutoff
+                            or match.quick_ratio() < cutoff):
+                        continue
+                    score = match.ratio()
+                    if score < cutoff:
+                        continue
+                    rank = 1 if re.findall(r"\d+", stem) == numbers else 0
+                hits[path].append((rank, score, os.path.join(base, name)))
+        seen += len(files)
+        if seen > limit:
+            complete = False
+            break
+    out = {}
+    for path, found in hits.items():
+        found.sort(key=lambda hit: (-hit[0], -hit[1], hit[2].lower()))
+        out[path] = [(score, where) for _rank, score, where in found]
+    return out, complete
+
+
+def _size_text(size):
+    for unit, step in (("GB", 1e9), ("MB", 1e6), ("kB", 1e3)):
+        if size >= step:
+            return "{:,} bytes ({:.1f} {})".format(size, size / step, unit)
+    return "{:,} bytes".format(size)
+
+
+def file_facts(path):
+    """`[(what, value), ...]` of a file on disk for "Details...": where it
+    is, how big, when it was made and changed, and a fingerprint of its
+    contents - what tells two files of one name apart."""
+    path = str(path)
+    facts = [("File", os.path.basename(path)),
+             ("Folder", os.path.dirname(os.path.abspath(path)))]
+    try:
+        info = os.stat(path)
+    except OSError:
+        facts.append(("On disk", "not there"))
+        return facts
+
+    def when(seconds):
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(seconds))
+
+    facts.append(("Size", _size_text(info.st_size)))
+    if os.name == "nt":                 # st_ctime is the creation there
+        facts.append(("Created", when(info.st_ctime)))
+    facts.append(("Modified", when(info.st_mtime)))
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(block)
+        facts.append(("SHA-256", digest.hexdigest()))
+    except OSError:
+        pass
+    return facts
+
+
+def missing_facts(gone):
+    """`[(what, value), ...]` of a file the session could not read
+    (`model.MissingSource`), for "Details..."."""
+    facts = [("File", gone.name), ("Saved as", gone.path),
+             ("Why", gone.reason or "not found")]
+    folder = os.path.dirname(gone.path)
+    facts.append(("Its folder", "is there" if folder and os.path.isdir(
+        folder) else "is not there either"))
+    title = gone.entry.get("title")
+    if title:
+        facts.append(("Named", str(title)))
+    facts.append(("Curves kept", str(len(gone.scans))))
+    facts.append(("Analyses kept", str(gone.analysis_count())))
+    facts.append(("Labels kept", str(len(gone.labels))))
+    return facts
+
+
+def _read_entry(entry, session_path, read_sample, notes, relocated,
+                found=None):
+    """One of a session's files: where the user found it (`found`, by the
+    saved path's `normcase`); else where it was; else beside the session;
     else the copy inside it. Raises with the reader's reason when none of
     them is there. A file read from elsewhere keeps the path the session
     knew it by until the opening is done (everything is matched by it),
     then takes its new one (`relocated`)."""
     path = entry["path"]
+    shown = os.path.basename(str(path).replace("\\", "/"))
+    chosen = (found or {}).get(os.path.normcase(str(path)))
+    if chosen:
+        sample = read_sample(chosen)
+        sample.path = path
+        relocated.append((sample, chosen))
+        return sample
     if os.path.isfile(path):
         return read_sample(path)
-    shown = os.path.basename(str(path).replace("\\", "/"))
-    found = _look_beside(session_path, path)
-    if found is not None:
-        sample = read_sample(found)
+    beside = _look_beside(session_path, path)
+    if beside is not None:
+        sample = read_sample(beside)
         sample.path = path
-        relocated.append((sample, found))
+        relocated.append((sample, beside))
         notes.append("{}: moved - found beside the session".format(shown))
         return sample
     copy = entry.get("copy")
@@ -213,6 +355,124 @@ def _read_entry(entry, session_path, read_sample, notes, relocated):
                      "the session".format(shown))
         return sample
     return read_sample(path)
+
+
+def _kept_missing(doc, gone_at, problems, entry, place, exc):
+    """A file that could not be read, kept for the next save and for the
+    finding (`model.MissingSource`); the opening says so."""
+    gone = model.MissingSource(entry.get("path", "?"), entry, exc)
+    gone.index = place
+    if gone.found_nowhere:
+        gone.reason = "not found"
+    doc.missing.append(gone)
+    gone_at[os.path.normcase(gone.path)] = gone
+    problems.append("{}: {} - kept in the outliner (right-click it to look "
+                    "for it)".format(gone.name, gone.reason))
+    return gone
+
+
+def _splice(state, key, extra):
+    """`extra` - `[(place, entry), ...]` - back into the list `state[key]`
+    at their places; returns where each entry already there went."""
+    items = list(state.get(key) or [])
+    slots = [(False, k) for k in range(len(items))]
+    for place, entry in sorted(extra, key=lambda pair: pair[0]):
+        slots.insert(min(place, len(slots)), (True, entry))
+    moved, out = {}, []
+    for new, (kept, what) in enumerate(slots):
+        if kept:
+            out.append(what)
+        else:
+            moved[what] = new
+            out.append(items[what])
+    state[key] = out
+    return moved
+
+
+def _keep_missing(doc, state):
+    """What the session held of its missing files (`doc.missing`) put back
+    into `state` where it was - their entries, their curves', the labels
+    hanging from them - and the colour links of everything else moved to
+    match. A link to or from a missing file's object is not kept (its
+    colour is)."""
+    gone = sorted(doc.missing, key=lambda item: item.index)
+    if not gone:
+        return state
+    for item in gone:
+        state["samples"].insert(min(item.index, len(state["samples"])),
+                                dict(item.entry))
+    before = [len(entry.get("analyses") or ()) for entry in state["scans"]]
+    scan_moves = _splice(state, "scans",
+                         [pair for item in gone for pair in item.scans])
+    label_moves = _splice(state, "labels",
+                          [pair for item in gone for pair in item.labels])
+    starts, count = [], 0
+    for entry in state["scans"]:
+        starts.append(count)
+        count += len(entry.get("analyses") or ())
+    old = []
+    for index, many in enumerate(before):
+        old.extend((index, k) for k in range(many))
+
+    def moved(ref):
+        kind, index = ref
+        if kind in ("scans", "markers"):
+            return [kind, scan_moves[int(index)]]
+        if kind == "labels":
+            return [kind, label_moves[int(index)]]
+        if kind == "analyses":
+            index, k = old[int(index)]
+            return [kind, starts[scan_moves[index]] + k]
+        return ref
+
+    links = []
+    for pair in state.get("colour_links") or ():
+        try:
+            links.append([moved(pair[0]), moved(pair[1])])
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
+    state["colour_links"] = links
+    # A span's ends name labels by their places; a region its curves by
+    # their files', a missing one's kept aside (`kept_scans`).
+    for span in state.get("spans") or ():
+        span["ends"] = [label_moves.get(end) if isinstance(end, int) else end
+                        for end in span.get("ends") or ()]
+    still = set(os.path.normcase(item.path) for item in gone)
+    for region, entry in zip(getattr(doc, "regions", None) or (),
+                             state.get("regions") or ()):
+        entry["scans"] = list(entry.get("scans") or ()) + [
+            path for path in getattr(region, "kept_scans", ())
+            if os.path.normcase(path) in still]
+    return state
+
+
+def _saved_target(doc, state, scan_at, label_at, made_at):
+    """What a session's colour link - `[list, position]` - names among what
+    was opened. Curves, their markers and analyses and the labels go by
+    their places IN THE FILE (`scan_at`, `label_at`, `made_at`), which a
+    missing file or an analysis not measured again would shift."""
+    flat = [(place, k) for place, entry in enumerate(state.get("scans")
+                                                     or ())
+            for k in range(len(entry.get("analyses") or ()))]
+
+    def target(ref):
+        try:
+            kind, index = ref
+            if kind in ("scans", "markers"):
+                scan = scan_at.get(int(index))
+                if scan is None or kind == "scans":
+                    return scan
+                return getattr(scan, "marker", None)
+            if kind == "labels":
+                return label_at.get(int(index))
+            if kind == "analyses":
+                k = int(index)
+                return made_at.get(flat[k]) if 0 <= k < len(flat) else None
+        except (TypeError, ValueError):
+            return None
+        return model._colour_target(doc, ref)
+
+    return target
 
 
 def to_state(doc):
@@ -311,7 +571,7 @@ def to_state(doc):
                       "head": span.head, "line_width": span.line_width,
                       "number_format": span.number_format, "z": span.z,
                       "visible": span.visible})
-    return {
+    state = {
         "format": FORMAT,
         "version": VERSION,
         "axes": axes,
@@ -362,6 +622,7 @@ def to_state(doc):
         "scans": scans,
         "colour_links": model.colour_links(doc),
     }
+    return _keep_missing(doc, state)
 
 
 def save(doc, path):
@@ -373,22 +634,38 @@ def save(doc, path):
     return path
 
 
-def load(path, read_sample):
+def load(path, read_sample, found=None):
     """Rebuild a document from a session file.
 
     Returns `(document, problems)`. `problems` names every file that could
     not be read, and every analysis that could not be measured again, so the
     window can say so in one line and still show everything else.
+    `found`: see `from_state`.
     """
     with open(path, "r", encoding="utf-8") as fh:
         state = json.load(fh)
+    return from_state(state, path, read_sample, found)
+
+
+def from_state(state, path, read_sample, found=None):
+    """Rebuild a document from a session's `state`, saved at `path` (where
+    a moved file is looked for). `found` maps a path the session names to
+    where that file is now - a file the user found. A file that cannot be
+    read is kept as it was (`doc.missing`). Returns `(document,
+    problems)`."""
     if state.get("format") != FORMAT:
         raise ValueError("not a {} file".format(FORMAT))
+    found = dict((os.path.normcase(str(saved)), str(now))
+                 for saved, now in (found or {}).items() if now)
     doc = model.Document()
     doc.loaded_version = int(state.get("version", 1) or 1)
     problems = []
     by_path = {}
     relocated = []
+    gone_at = {}
+    # Where each curve, analysis and label of the FILE went (a colour link
+    # names them by their places there).
+    scan_at, made_at, label_at = {}, {}, {}
     for key, raw in (state.get("style") or {}).items():
         if key in style.BY_KEY and style.BY_KEY[key].figure:
             setattr(doc.style, key, style.BY_KEY[key].clean(raw))
@@ -410,13 +687,12 @@ def load(path, read_sample):
     doc.x_break = (dict(cut) if isinstance(cut, dict) else None)
     if doc.x_break is not None and model.break_of(doc) is None:
         doc.x_break = None
-    for entry in state.get("samples", []):
+    for place, entry in enumerate(state.get("samples", [])):
         try:
             sample = _read_entry(entry, path, read_sample, problems,
-                                 relocated)
+                                 relocated, found)
         except Exception as exc:
-            problems.append("{}: {}".format(
-                os.path.basename(entry.get("path", "?")), exc))
+            _kept_missing(doc, gone_at, problems, entry, place, exc)
             continue
         title = entry.get("title")
         sample.title = str(title) if title else None
@@ -430,8 +706,12 @@ def load(path, read_sample):
         doc.samples.append(sample)
         by_path[os.path.normcase(sample.path)] = sample
     scan_by_path = {}
-    for entry in state.get("scans", []):
-        sample = by_path.get(os.path.normcase(entry.get("path", "")))
+    for place, entry in enumerate(state.get("scans", [])):
+        key = os.path.normcase(entry.get("path", ""))
+        if key in gone_at:
+            gone_at[key].scans.append((place, entry))
+            continue
+        sample = by_path.get(key)
         if sample is None or sample.scans:
             continue
         scan = model.Scan(doc._next_id(), sample,
@@ -461,7 +741,8 @@ def load(path, read_sample):
         sample.scans.append(scan)
         doc.scans.append(scan)
         scan_by_path[os.path.normcase(sample.path)] = scan
-        for saved in entry.get("analyses") or []:
+        scan_at[place] = scan
+        for k, saved in enumerate(entry.get("analyses") or []):
             cursors = saved.get("cursors") or []
             made = None
             axis = saved.get("axis")
@@ -476,6 +757,7 @@ def load(path, read_sample):
                     scan.display_name(), saved.get("model", "an analysis")))
                 continue
             _restore_analysis(made, saved)
+            made_at[(place, k)] = made
         marker = entry.get("marker") or {}
         scan.marker.at = _marker_at(marker.get("at"))
         scan.marker.number_format = labels.normalise_format(
@@ -499,7 +781,13 @@ def load(path, read_sample):
         if axis is None or not isinstance(saved, dict):
             continue
         _restore_axis(axis, which, saved)
-    for saved in state.get("labels") or []:
+    for place, saved in enumerate(state.get("labels") or []):
+        if (saved.get("scan") and os.path.normcase(str(saved.get("scan")))
+                in gone_at):
+            # Hanging from a missing file's curve: kept with the file.
+            gone_at[os.path.normcase(str(saved.get("scan")))].labels.append(
+                (place, saved))
+            continue
         owner = scan_by_path.get(os.path.normcase(str(saved.get("scan"))))\
             if saved.get("scan") else None
         label = doc.add_label(saved.get("text", "Label"),
@@ -536,6 +824,7 @@ def load(path, read_sample):
             label.dx = float(_number_or_none(saved.get("dx")) or 0.0)
             label.dy = _number_or_none(saved.get("dy"))
         label.line_dashed = bool(saved.get("line_dashed", True))
+        label_at[place] = label
     for saved in state.get("regions") or []:
         lo, hi = (_number_or_none(saved.get("lo")),
                   _number_or_none(saved.get("hi")))
@@ -554,6 +843,9 @@ def load(path, read_sample):
         region.scans = [scan_by_path[os.path.normcase(str(p))]
                         for p in saved.get("scans") or ()
                         if os.path.normcase(str(p)) in scan_by_path]
+        # A missing file's curve, for when it is found.
+        region.kept_scans = [str(p) for p in saved.get("scans") or ()
+                             if os.path.normcase(str(p)) in gone_at]
         region.text = str(saved.get("text") or "")
         region.colour = saved.get("colour", "auto")
         region.size = _number_or_none(saved.get("size"))
@@ -571,10 +863,9 @@ def load(path, read_sample):
         span = model.SpanArrow(doc._next_id(), x0, x1,
                                float(saved.get("y", 0.3)))
         ends = list(saved.get("ends") or [None, None])[:2]
-        span.ends = [doc.labels[int(i)]
-                     if isinstance(i, int) and 0 <= i < len(doc.labels)
-                     and doc.labels[int(i)].vline is not None else None
-                     for i in ends + [None] * (2 - len(ends))]
+        span.ends = [label_at.get(i) if isinstance(i, int)
+                     and getattr(label_at.get(i), "vline", None) is not None
+                     else None for i in ends + [None] * (2 - len(ends))]
         text = saved.get("text")
         span.text = str(text) if text is not None else None
         if saved.get("place") in model.SpanArrow.PLACES:
@@ -641,7 +932,9 @@ def load(path, read_sample):
                       and background.startswith("#") else None)
     doc.offset_markers = bool(state.get("offset_markers", False))
     doc.view = _view_from(state.get("view"))
-    model.restore_colour_links(doc, state.get("colour_links"))
+    model.restore_colour_links(
+        doc, state.get("colour_links"),
+        _saved_target(doc, state, scan_at, label_at, made_at))
     for sample, found in relocated:
         sample.path = found
     doc.path = str(path)

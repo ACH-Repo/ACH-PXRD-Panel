@@ -835,3 +835,66 @@ def test_the_scale_survives_the_session_and_never_the_measurement(
     assert back.scans[0].multiplier == 15.0
     label = back.multiplier_label_of(back.scans[0])
     assert label is not None and label.shows == "multiplier"
+
+
+def test_the_file_window_reads_a_pasted_path_and_undoes_it(window,
+                                                            tmp_path):
+    """End to end: a .xy pasted in quotes into the file's window is read
+    in the old file's place, the window opens again on it, and Ctrl+Z
+    puts the old file back."""
+    other = tmp_path / "other.xy"
+    x = np.linspace(5.0, 50.0, 451)
+    other.write_text("".join("{:.3f} {:.3f}{}".format(a, 100 + a, chr(10))
+                             for a in x))
+    scan = window.doc.scans[0]
+    sample = scan.sample
+    old = sample.path
+    window.edit_object(sample)
+    row = window._dialogs[-1].file_row
+    row.path.setText('"{}"'.format(other))
+    row.path.editingFinished.emit()
+    assert sample.path == str(other) and len(sample.x) == 451
+    assert window._dialogs[-1].file_row.path.text() == str(other)
+    window._dialogs[-1].close()
+    window.undo_step()
+    assert sample.path == old
+
+
+def test_a_missing_file_keeps_its_region_curves_and_the_spans_ends(window):
+    """A file the session cannot read keeps its labels aside: a span's
+    ends (labels by their places) and a region's curves (by their files)
+    still name the right ones, and saving puts back what it had."""
+    import copy
+    doc, plot = window.doc, window.plot
+    rect = plot.plot_rect()
+    first, second = doc.scans[0], doc.scans[1]
+    doc.add_label("on the first", 0.5, 0.5, first)
+    a = window.add_marker_line(text="a", at=QPointF(plot.x_to_px(25.0, rect),
+                                                    rect.center().y()))
+    b = window.add_marker_line(text="b", at=QPointF(plot.x_to_px(35.0, rect),
+                                                    rect.center().y()))
+    doc.select_only([a, b])
+    span = window.add_span_between()
+    assert span.ends == [a, b]
+    window.add_region(30.0, 32.0, scans=[first, second])
+    state = session.to_state(doc)
+    lost = first.sample.path
+
+    def read(path):
+        if path == lost:
+            raise IOError("no such file")
+        twin = copy.copy([s for s in doc.samples if s.path == path][0])
+        twin.scans = []
+        return twin
+
+    opened, problems = session.from_state(state, "", read)
+    assert [g.path for g in opened.missing] == [lost]
+    assert [lb.text for lb in opened.spans[0].ends] == ["a", "b"]
+    region = opened.regions[0]
+    assert [s.sample.path for s in region.scans] == [second.sample.path]
+    assert region.kept_scans == [lost]
+    again = session.to_state(opened)
+    assert again["labels"] == state["labels"]
+    assert again["spans"] == state["spans"]
+    assert sorted(again["regions"][0]["scans"]) == sorted(
+        state["regions"][0]["scans"])

@@ -121,10 +121,10 @@ THEMES = {
 THEME = THEME_DARK
 globals().update(THEMES[THEME_DARK])
 
-#: Trace colours are brought down to this relative luminance on a light
-#: ground. The number was measured against tab10 / ColorBrewer /
-#: Okabe-Ito rather than taken from the WCAG floor, which is darker than any
-#: of them. The palette is chosen for a dark background and none of it prints.
+#: The handling colours (`ACCENTS`) are brought down to this relative
+#: luminance on a light ground; an object's colour never is (`paper_colour`).
+#: The number was measured against tab10 / ColorBrewer / Okabe-Ito rather
+#: than taken from the WCAG floor, which is darker than any of them.
 PAPER_LUMA = 0.42
 
 
@@ -213,22 +213,13 @@ def for_light(colour):
                            colour.blueF() * factor)
 
 
-#: The default screen palette (`model.PALETTE`): chosen for a dark ground,
-#: so a white page darkens it (`for_light`). A colour somebody chose - in
-#: the picker, the hex field, a gradient - is drawn exactly as chosen on
-#: either page.
-_SCREEN_PALETTE = frozenset(c.lower() for c in model.PALETTE)
-
-
 def paper_colour(colour):
-    """An object's colour as a white page draws it: one of the default
-    screen palette darkened to read on paper (`for_light`), any other
-    exactly as chosen. (The handling colours - reticle, selection - are
-    darkened by `set_theme` itself.)"""
-    colour = QColor(colour)
-    if colour.name().lower() in _SCREEN_PALETTE:
-        return for_light(colour)
-    return colour
+    """An object's colour as a white page - and so every export - draws
+    it: exactly as on the screen, the default palette included. Darkened
+    to read on paper (the palette is chosen for a dark ground), its orange
+    came out brown. Only the handling colours - reticle, selection -
+    follow the page (`set_theme`, `for_light`)."""
+    return QColor(colour)
 
 #: Room for the y numbers, which this plot has and the PXRD one does not.
 _LEFT = 66

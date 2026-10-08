@@ -141,6 +141,93 @@ off band markers, the proposed order.
 * Test: `test_settings_windows_put_the_text_and_the_colour_first` in
   `tests/test_family.py`, and the region's in `tests/test_dialogs.py`.
 
+## Round 7 (2026-10-05): F3 remembers, aliases of your own, family-wide
+
+Christian: show the F3 option used last when the search opens again; and
+custom aliases, user/installation specific, shareable as a .json dropped
+on the viewport, with a reset to factory. His choices: a recent list (not
+the last query typed back), family-wide.
+
+* `core/userops.py` (the same file in every member): `recent` /
+  `note_used` (5, newest first), `aliases` / `add_alias` /
+  `remove_aliases`, `export` / `read_shared` / `merge` / `install`,
+  `reset`; kept in `operators.json` beside the preferences.
+* `OperatorRegistry.search(..., extra=)` searches the user's aliases, and
+  ranks an operator whose alias starts with what was typed first.
+* `OperatorPalette`: "Used last" and "Every operator" headings when the
+  box is empty, the newest recent selected; a column for the user's
+  aliases (greyed); right-click: "Add an alias...", "Remove my alias".
+  The window's `previous` text was never set (dead since Triplot); the
+  window builds the palette in `operator_palette` and records a choice
+  in `palette_ran`.
+* Edit > Operator search: save the aliases as..., install from a file...,
+  reset to factory (asked). A dropped alias file installs (asked, with
+  what it adds; unknown operators skipped and said).
+* Tests in `tests/test_family.py`.
+
+## Round 8 (2026-10-05): the source file, typed or pasted
+
+Christian (a PXRD file window): set the source file there too, by
+browsing or by pasting a full path, the quotes Windows adds stripped. His
+word: all three panels, the file's window and the curve's.
+
+* `dialogs.SourceRow` (a path box and Browse...) in `SampleSettings` and
+  `ScanSettings` (Triplot's curve window had no File row; it has one now,
+  after Analyses). `clean_path`: spaces, quotes, file:/// links.
+* `_LiveDialog._source_chosen`: the window closes, `change_source` runs
+  (its own undo step), the window opens again on the new file.
+  `MainWindow.ask_source_path` is the file dialog both use.
+* Test in `tests/test_family.py`; end to end with a real .xy in `tests/test_window.py`.
+
+## Round 9 (2026-10-07): colours as on the screen, family-wide
+
+From Triplot (Christian: an orange curve exported "nearly brown").
+`paper_colour` drew the default palette darkened to `PAPER_LUMA` on a
+white page, so every export: its orange became brown. Shown the
+choices (the same hue and saturation at 3:1 or 3.5:1 contrast, or
+exactly as on screen), he chose the screen colours as they are, for
+the whole family. `for_light` is the handling colours' only now. Test
+in `tests/test_family.py`.
+
+## Round 10 (2026-10-08): missing files kept, found again - family-wide
+
+Christian (2026-10-08): a Triplot session copied about "lost its data
+source" - its file had been saved from Downloads as `x(1).tri` and lay
+beside the session as `x.tri`. The look beside a session is by exact
+name, so the file was missing, and the outliner showed nothing at all.
+Here a session keeps a copy of each file, so this is a session saved
+before there were copies, or one whose copy cannot be read.
+He chose, for the whole family:
+
+* **The file keeps a row** (`model.MissingSource`, `doc.missing`): its
+  name in red, MISSING, its saved path on the tooltip. What the session
+  held of it - the file's entry, its curves', the labels hanging from
+  them - is KEPT and put back into every save at its place
+  (`session._keep_missing`), colour links, span ends and region curves
+  moved to match. Before, the next save lost all of it.
+* **Right-click: Locate...** (by hand), **Find in a folder...** (his
+  idea: `os.walk` under a folder he names, the same extension, the name
+  at least 0.85 alike by difflib - `session.similar_files`), Details...,
+  Forget (one undo step). A copy's "(1)" / " - Copy" counts as the same
+  name and comes first, then names with the same numbers: "Run-2" is as
+  alike to "Run-1" as "Run-1(1)" is, so a search only OFFERS
+  (`FoundFilesDialog`, the likeliest chosen), and the automatic look
+  beside the session stays by exact name. Found, the figure is opened
+  again from its own state with the new place (`found_sources`,
+  `session.from_state(..., found=...)`): everything back, the undo
+  history cleared, changed until saved.
+* **Details...** on every file's right-click menu (his request: two files
+  of one name): folder, size, created and modified, SHA-256 of the
+  contents, and what the run records (`profile.details`); Copy puts it
+  on the clipboard. Not modal, so two can stand side by side.
+* Found on the way: a colour link names objects by their place in the
+  file, and with a file missing the places moved - a link joined the
+  wrong curves. `from_state` now restores them through the places in
+  the FILE (`_saved_target`).
+
+Test in `tests/test_family.py`; spans and regions in
+`tests/test_window.py`.
+
 ## Next (suggested; Christian decides)
 
 - Use it on real figures and collect requests here.

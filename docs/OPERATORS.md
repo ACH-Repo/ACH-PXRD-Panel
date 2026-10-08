@@ -160,6 +160,9 @@ This file is GENERATED. After adding an operator, run:
 | Operator | Key | Lights up when | Note |
 | :-- | :-- | :-- | :-- |
 | Search operators... | `F3` | always | also the Search button on the menu bar |
+| Save my operator aliases as... |  | always | a .json to share: dropped on a panel, it installs them |
+| Install operator aliases from a file... |  | always | or drop the file on the window |
+| Reset the operator search to factory |  | always | your aliases and the recent list; asked first |
 | Open the log folder |  | always |  |
 | About PXRD-Panel |  | always | Help menu: version, readers, Qt |
 | Settings... | `Ctrl+,` | always | sizes, label alignment, pick distance |

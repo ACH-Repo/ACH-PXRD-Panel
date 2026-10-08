@@ -35,8 +35,10 @@ from ..core import numbers
 from ..core.chem import mirrored_layout
 from ..core.log import LOGGER
 from ..core import figure as figure_module
+from ..core import userops
 from .dialogs import (AnalysisSettings, AxisSettings, BreakDialog,
-                      CaptionSettings, FigureSettings, LabelSettings,
+                      CaptionSettings, DetailsDialog, FigureSettings,
+                      FoundFilesDialog, LabelSettings,
                       ExportDialog, ImageSettings, LegendSettings,
                       MoleculeSettings, NumberSettings,
                       OffsetMarkerSettings, PageSizeDialog,
@@ -167,7 +169,6 @@ class MainWindow(QMainWindow):
             lambda samples, gap: self.move_samples(samples, gap))
 
         self.ops = ops.OperatorRegistry()
-        self._last_operator = ""
         self._register_ops()
         self._install_shortcuts()
         self._build_menus()
@@ -1431,6 +1432,19 @@ class MainWindow(QMainWindow):
         r("app.operator_search", "Search operators...",
           lambda c: c.operator_search(), category="App", key="F3",
           shortcut="F3", aliases=("command palette", "find command", "menu"))
+        # The user's own aliases for F3 (`core/userops.py`).
+        r("app.aliases_save", "Save my operator aliases as...",
+          lambda c: c.save_aliases(), category="App",
+          aliases=("alias", "aliases", "share", "export", "search words"),
+          enabled=lambda c: bool(userops.aliases()))
+        r("app.aliases_install", "Install operator aliases from a file...",
+          lambda c: c.ask_install_aliases(), category="App",
+          aliases=("alias", "aliases", "import", "share", "json"))
+        r("app.search_reset", "Reset the operator search to factory",
+          lambda c: c.reset_operator_search(), category="App",
+          aliases=("alias", "aliases", "recent", "factory", "forget",
+                   "default"),
+          enabled=lambda c: bool(userops.aliases() or userops.recent()))
         r("app.log", "Open the log folder", lambda c: c.open_log_folder(),
           category="App", aliases=("errors", "debug", "crash", "log"))
         r("app.about", "About {}".format(branding.APP_NAME),
@@ -1487,6 +1501,9 @@ class MainWindow(QMainWindow):
                    "select.all",
                    "select.none", "select.invert", "select.same_sample",
                    None, "figure.layout", "app.settings",
+                   ("Operator search", ("app.aliases_save",
+                                        "app.aliases_install",
+                                        "app.search_reset")),
                    ("Style presets", "presets"),
                    ("Theme", ("view.theme_blender_default",
                               "view.theme_light", "view.theme_boombox")))),
@@ -1609,10 +1626,106 @@ class MainWindow(QMainWindow):
         return target
 
     def operator_search(self):
-        dialog = OperatorPalette(self.ops, self, self, self._last_operator)
+        dialog = self.operator_palette()
         if dialog.exec() and dialog.chosen:
-            self._last_operator = ""
-            self.run_op(dialog.chosen)
+            self.palette_ran(dialog.chosen)
+
+    def operator_palette(self):
+        """F3's palette, built and not shown (a test reaches it here)."""
+        return OperatorPalette(self.ops, self, self)
+
+    def palette_ran(self, op_id):
+        """An operator chosen in F3: the newest of the ones used last
+        (`userops.note_used`), then run."""
+        userops.note_used(op_id)
+        return self.run_op(op_id)
+
+    # ------------------------------------------- the user's operator aliases
+    def save_aliases(self, path=None):
+        """Edit > Operator search > Save: every alias of the user's in a
+        `.json` file, to be dropped on another panel."""
+        if not userops.aliases():
+            self.note.setText("No aliases of your own yet: right-click an "
+                              "operator in F3 to add one")
+            return None
+        if path is None:
+            path, _filter = QFileDialog.getSaveFileName(
+                self, "Save my operator aliases", "operator-aliases.json",
+                "Operator aliases (*.json)")
+            if not path:
+                return None
+        if not path.lower().endswith(".json"):
+            path += ".json"
+        userops.export(path)
+        count = sum(len(v) for v in userops.aliases().values())
+        self.note.setText("{} alias(es) saved to {}: drop the file on a "
+                          "panel to install them".format(count, path))
+        return path
+
+    def ask_install_aliases(self):
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Install operator aliases", "",
+            "Operator aliases (*.json)")
+        return self.install_aliases(path) if path else None
+
+    def install_aliases(self, path):
+        """A file of somebody's aliases (dropped, or from the menu): what
+        it would add is shown first (`confirm_aliases`), then added. An
+        operator this panel does not have is skipped, and said."""
+        try:
+            app, table = userops.read_shared(path)
+        except ValueError as exc:
+            self.note.setText("Not operator aliases: {}".format(exc))
+            return None
+        added, unknown = userops.merge(
+            table, lambda op_id: self.ops.get(op_id) is not None)
+        skipped = (" ({} for operators {} does not have skipped)".format(
+            len(unknown), branding.APP_NAME) if unknown else "")
+        if not added:
+            self.note.setText("Nothing new in {}{}".format(
+                os.path.basename(path), skipped))
+            return []
+        if not self.confirm_aliases(path, app, added, unknown):
+            return None
+        userops.install(added)
+        self.note.setText("{} alias(es) installed from {}{}".format(
+            len(added), os.path.basename(path), skipped))
+        return added
+
+    def confirm_aliases(self, path, app, added, unknown):
+        """Asked before a file's aliases go in, saying what they are. A
+        method of its own so a test can answer it."""
+        lines = ['"{}" finds {}'.format(alias, self.ops.get(op_id).label)
+                 for op_id, alias in added[:12]]
+        if len(added) > 12:
+            lines.append("and {} more".format(len(added) - 12))
+        if unknown:
+            lines.append("")
+            lines.append("{} for operators {} does not have: skipped".format(
+                len(unknown), branding.APP_NAME))
+        text = "Install {} alias(es) from {}{}?\n\n{}".format(
+            len(added), os.path.basename(path),
+            " (made in {})".format(app) if app else "", "\n".join(lines))
+        return QMessageBox.question(
+            self, "Install operator aliases", text,
+            QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes
+
+    def reset_operator_search(self):
+        """Back to the factory: no aliases of the user's, nothing used
+        last. Asked first (`confirm_reset`)."""
+        if not self.confirm_reset():
+            return False
+        userops.reset()
+        self.note.setText("The operator search is as installed: no aliases "
+                          "of yours, nothing used last")
+        return True
+
+    def confirm_reset(self):
+        count = sum(len(v) for v in userops.aliases().values())
+        return QMessageBox.question(
+            self, "Reset the operator search",
+            "Forget your {} alias(es) and the operators used last?".format(
+                count), QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes
 
     def open_settings(self):
         """The house style page. One at a time: a second copy editing the
@@ -1633,6 +1746,26 @@ class MainWindow(QMainWindow):
         menu = self.context_menu_for(obj)
         if not menu.isEmpty():
             menu.exec(pos if isinstance(pos, QPoint) else QPoint(pos))
+
+    def _missing_menu(self, menu, gone):
+        """A missing file's menu: the two ways to look for it."""
+        menu.setToolTipsVisible(True)
+        act = menu.addAction("Locate {}...".format(gone.name))
+        act.setToolTip("Choose the file by hand; the figure opens again "
+                       "with it.")
+        act.triggered.connect(lambda _c=False: self.locate_source(gone))
+        find = menu.addAction("Find in a folder...")
+        find.setToolTip("Look under a folder for files named like the "
+                        "missing ones: the same extension, the name {:.0%} "
+                        "alike or more.".format(session.SIMILAR))
+        find.triggered.connect(lambda _c=False: self.find_sources())
+        info = menu.addAction("Details...")
+        info.triggered.connect(lambda _c=False: self.show_details(gone))
+        menu.addSeparator()
+        forget = menu.addAction("Forget {}".format(gone.name))
+        forget.setToolTip("Its curves, analyses and labels are not saved "
+                          "again.")
+        forget.triggered.connect(lambda _c=False: self.forget_missing(gone))
 
     def context_menu_for(self, obj):
         """The right-click menu for `obj` (None: the empty plot), BUILT and
@@ -1688,6 +1821,10 @@ class MainWindow(QMainWindow):
                               "keeps its place, colour and labels.")
             source.triggered.connect(
                 lambda _c=False: self.change_source(obj))
+            info = menu.addAction("Details...")
+            info.setToolTip("Where the file is, its size and dates, and "
+                            "what the run records.")
+            info.triggered.connect(lambda _c=False: self.show_details(obj))
             if obj.scans:
                 gone = menu.addAction("Remove {} from the plot".format(
                     obj.name))
@@ -1697,6 +1834,8 @@ class MainWindow(QMainWindow):
             # be taken off it at all.
             shut = menu.addAction("Close {}\tDel".format(obj.name))
             shut.triggered.connect(lambda _c=False: self.close_sample(obj))
+        elif isinstance(obj, model.MissingSource):
+            self._missing_menu(menu, obj)
         else:
             # No Open or Select-all here; the page's colour, white and the
             # theme's a click away.
@@ -1967,6 +2106,14 @@ class MainWindow(QMainWindow):
                                       or outliner.isAncestorOf(focus))
         return outliner.selected_samples() if mine else []
 
+    def ask_source_path(self, sample):
+        """The file dialog of "Change the source file...", at the file's
+        folder: a path, or "". Also the Browse... of a file's settings."""
+        path, _f = QFileDialog.getOpenFileName(
+            self, "Change the source of {}".format(sample.name),
+            os.path.dirname(sample.path), readers.FILTER)
+        return path
+
     def change_source(self, sample, path=None):
         """PowerPoint's "Change picture" for a file: another measurement
         in its place. The SAME sample object takes the new file's
@@ -1976,9 +2123,7 @@ class MainWindow(QMainWindow):
         made on it are measured again on the new pattern. One undo step.
         Returns the problems, or None when nothing was done."""
         if path is None:
-            path, _f = QFileDialog.getOpenFileName(
-                self, "Change the source of {}".format(sample.name),
-                os.path.dirname(sample.path), readers.FILTER)
+            path = self.ask_source_path(sample)
         if not path:
             return None
         if os.path.normcase(os.path.abspath(path)) == os.path.normcase(
@@ -2079,6 +2224,158 @@ class MainWindow(QMainWindow):
             self.undo.push(undo.CallCommand(close, reopen, label))
         self.refresh()
 
+    # --------------------------------------------- files a session misses
+    # A file a session could not read is KEPT (`model.MissingSource`): a
+    # row of its own in the outliner, saved again as it was, and back on
+    # the figure, curves, analyses, labels and all, once it is found - by
+    # hand (`locate_source`) or under a folder by a name like its own
+    # (`find_sources`).
+    def details_rows(self, obj):
+        """What "Details..." says of a file (`model.Sample`) or of one the
+        session could not read (`model.MissingSource`)."""
+        if isinstance(obj, model.MissingSource):
+            return session.missing_facts(obj)
+        rows = session.file_facts(obj.path)
+        if getattr(obj, "from_copy", False):
+            rows.append(("Read from", "the copy inside the session"))
+        return rows + profile.details(obj)
+
+    def details_dialog(self, obj):
+        """The Details window of a file, BUILT and not shown. Two of them
+        side by side tell apart two files of one name."""
+        missing = isinstance(obj, model.MissingSource)
+        return DetailsDialog(
+            self, "Details of {}{}".format(obj.name,
+                                           " (missing)" if missing else ""),
+            self.details_rows(obj),
+            locate=(lambda: self.locate_source(obj)) if missing else None,
+            find=(lambda: self.find_sources()) if missing else None)
+
+    def show_details(self, obj):
+        dialog = self.details_dialog(obj)
+        dialog.show()
+        dialog.raise_()
+        return dialog
+
+    def ask_locate_path(self, gone):
+        """The file dialog of "Locate...": a path, or ""."""
+        path, _f = QFileDialog.getOpenFileName(
+            self, "Where is {}?".format(gone.name),
+            os.path.dirname(self.doc.path) if self.doc.path else "",
+            readers.FILTER)
+        return path
+
+    def locate_source(self, gone, path=None):
+        """A missing file chosen by hand (`found_sources`)."""
+        if path is None:
+            path = self.ask_locate_path(gone)
+        if not path:
+            return None
+        return self.found_sources({gone.path: path})
+
+    def ask_find_folder(self):
+        """The folder dialog of "Find in a folder...": a folder, or ""."""
+        return QFileDialog.getExistingDirectory(
+            self, "Look for the missing files under",
+            os.path.dirname(self.doc.path) if self.doc.path else "")
+
+    def find_sources(self, folder=None):
+        """The missing files looked for under `folder` and every folder in
+        it, by names like theirs (`session.similar_files`: the same
+        extension, the name at least `session.SIMILAR` alike). What is
+        found is OFFERED (`choose_found`), never taken by itself: "Run-1"
+        is as like "Run-2" as a copy is like its original."""
+        gone = list(self.doc.missing)
+        if not gone:
+            return None
+        if folder is None:
+            folder = self.ask_find_folder()
+        if not folder:
+            return None
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            hits, complete = session.similar_files(
+                folder, [item.path for item in gone])
+        finally:
+            QApplication.restoreOverrideCursor()
+        stopped = ("" if complete else " (stopped after {:,} files)".format(
+            session.FIND_LIMIT))
+        if not any(hits.values()):
+            self.note.setText("Nothing named like {} under {}{}".format(
+                ", ".join(item.name for item in gone), folder, stopped))
+            return None
+        found = self.choose_found(
+            folder, [(item.name, item.path, hits[item.path])
+                     for item in gone], stopped)
+        if not found:
+            return None
+        return self.found_sources(found)
+
+    def choose_found(self, folder, hits, stopped=""):
+        """What to take of what a search found: `{saved path: file}`, empty
+        when cancelled. A method of its own so a test can answer it."""
+        dialog = FoundFilesDialog(self, folder, hits, stopped)
+        if dialog.exec() != QDialog.Accepted:
+            return {}
+        return dialog.chosen()
+
+    def found_sources(self, found):
+        """The figure opened again with missing files found elsewhere
+        (`found`: the path the session knows -> where the file is now):
+        what the session kept of them comes back as it was saved. As on
+        opening, the undo history starts again; the figure counts as
+        changed until it is saved with the new places. Returns the names
+        of the files found."""
+        found = dict((saved, now) for saved, now in found.items() if now)
+        if not found:
+            return None
+        for dialog in self.popups():
+            dialog.close()
+        before = [item.path for item in self.doc.missing]
+        self._sync_view()
+        state = session.to_state(self.doc)
+        try:
+            doc, _problems = session.from_state(
+                state, self.doc.path or "", loader.read_sample, found)
+        except Exception as exc:
+            self.note.setText("Could not open the figure again: {}".format(
+                exc))
+            return None
+        doc.path = self.doc.path
+        still = set(os.path.normcase(item.path) for item in doc.missing)
+        back = [os.path.basename(path.replace("\\", "/")) for path in before
+                if os.path.normcase(path) not in still]
+        asked = set(os.path.normcase(str(saved)) for saved in found)
+        failed = ["{}: {}".format(item.name, item.reason)
+                  for item in doc.missing
+                  if os.path.normcase(item.path) in asked]
+        self._adopt(doc)
+        self.note.setText("; ".join(
+            (["Found {}".format(", ".join(back))] if back else []) + failed))
+        LOGGER.info("found %s", found)
+        return back
+
+    def forget_missing(self, gone):
+        """A missing file taken off the figure for good: what the session
+        kept of it is not saved again. One undo step."""
+        doc = self.doc
+        if gone not in doc.missing:
+            return
+        index = doc.missing.index(gone)
+
+        def forget():
+            if gone in doc.missing:
+                doc.missing.remove(gone)
+
+        def keep():
+            if gone not in doc.missing:
+                doc.missing.insert(min(index, len(doc.missing)), gone)
+
+        # CallCommand forgets it (it applies itself when built).
+        self.undo.push(undo.CallCommand(forget, keep,
+                                        "forget {}".format(gone.name)))
+        self.refresh()
+
     def open_session(self, path=None):
         if path is None:
             path, _f = QFileDialog.getOpenFileName(
@@ -2098,14 +2395,22 @@ class MainWindow(QMainWindow):
         if (current is self._blank or current.doc.samples
                 or current.doc.path or self.is_modified()):
             self.new_figure()
-        self.doc = doc
-        self.undo.clear()
-        self.plot.set_document(doc)
-        self.outliner.set_document(doc)
         self.note.setText("; ".join(problems) if problems
                           else "Opened {}".format(os.path.basename(path)))
         LOGGER.info("opened session %s%s", path,
                     " ({})".format("; ".join(problems)) if problems else "")
+        self._adopt(doc)
+        self.mark_clean()
+        return path
+
+    def _adopt(self, doc):
+        """`doc` in the current tab, drawn as it was saved: its framing,
+        an older session's decorators where they were. The undo history
+        starts again."""
+        self.doc = doc
+        self.undo.clear()
+        self.plot.set_document(doc)
+        self.outliner.set_document(doc)
         self.refresh(keep_view=False)
         if doc.view:
             # The framing it was saved with: without it, a y range narrowed
@@ -2121,8 +2426,6 @@ class MainWindow(QMainWindow):
                 setattr(artist, name, value)
             doc.follow_zoom = False
         self.plot.attach_all()
-        self.mark_clean()
-        return path
 
     def save_session(self, ask=False, path=None):
         path = path or (self.doc.path if not ask else "")
@@ -2587,6 +2890,8 @@ class MainWindow(QMainWindow):
             obj = chosen[0] if chosen else None
         if isinstance(obj, model.Sample):
             return self.edit_sample(obj)
+        if isinstance(obj, model.MissingSource):
+            return self.show_details(obj)
         group = self.settings_group(obj)
         if isinstance(obj, model.Scan):
             dialog = ScanSettings(self, obj, self.doc.unit_for(obj),
@@ -4393,6 +4698,13 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         event.acceptProposedAction()
+        # A file of operator aliases, known by what it says it is.
+        shared = [p for p in paths if userops.is_shared_file(p)]
+        for path in shared:
+            self.install_aliases(path)
+        paths = [p for p in paths if p not in shared]
+        if not paths:
+            return
         pictures = [p for p in paths if p.lower().endswith(self.IMAGE_TYPES)]
         if pictures:
             from PySide6.QtGui import QImage as _Image
@@ -4428,6 +4740,7 @@ class MainWindow(QMainWindow):
             if not path:
                 continue
             if (loader.looks_readable(path)
+                    or userops.is_shared_file(path)
                     or path.lower().endswith(branding.SESSION_EXT)
                     or path.lower().endswith(branding.PRESET_EXT)
                     or path.lower().endswith(MainWindow.IMAGE_TYPES)):

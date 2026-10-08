@@ -183,7 +183,12 @@ class Outliner(QTreeWidget):
                 row = QTreeWidgetItem(self)
                 self._fill_file_row(row, sample)
                 row.setExpanded(("sample", id(sample)) not in collapsed)
-            if doc.samples:
+            # A file the session could not read keeps a row of its own,
+            # after the files that are there: its name, and a right-click
+            # that looks for it.
+            for gone in doc.missing:
+                self._add_missing(gone)
+            if doc.samples or doc.missing:
                 line = QTreeWidgetItem(self)
                 line.setData(0, Qt.UserRole, SEPARATOR)
                 line.setFlags(Qt.NoItemFlags)
@@ -201,7 +206,7 @@ class Outliner(QTreeWidget):
             self._drop_item = None
             for item in self._items():
                 for column in (0, 1):
-                    if item.text(column):
+                    if item.text(column) and not item.toolTip(column):
                         item.setToolTip(column, item.text(column))
                 # Only a label (onto a scan) and a file (into another
                 # place in the list) are dragged.
@@ -210,6 +215,28 @@ class Outliner(QTreeWidget):
                     item.setFlags(item.flags() & ~Qt.ItemIsDragEnabled)
         finally:
             self._filling = False
+
+    def _add_missing(self, gone):
+        """A file the session could not read (`model.MissingSource`):
+        its name in the alarm colour, never selected or dragged."""
+        row = QTreeWidgetItem(self)
+        row.setText(0, gone.name)
+        row.setText(1, "MISSING")
+        row.setData(0, Qt.UserRole, ("missing", id(gone)))
+        row.setFlags(Qt.ItemIsEnabled)
+        font = QFont(self.font())
+        font.setBold(True)
+        font.setItalic(True)
+        row.setFont(0, font)
+        row.setForeground(0, QBrush(_ALARM))
+        row.setForeground(1, QBrush(_ALARM))
+        tip = ("{} is not at {}. Kept with it: {} curve(s), {} analyses, "
+               "{} label(s). Right-click to look for it.".format(
+                   gone.name, gone.path, len(gone.scans),
+                   gone.analysis_count(), len(gone.labels)))
+        row.setToolTip(0, tip)
+        row.setToolTip(1, tip)
+        return row
 
     def _add_decorator(self, parent, obj):
         """One row under Decorators: a name, and what it is."""
@@ -636,6 +663,10 @@ class Outliner(QTreeWidget):
             for sample in doc.samples:
                 if id(sample) == ident:
                     return sample
+        if kind == "missing":
+            for gone in doc.missing:
+                if id(gone) == ident:
+                    return gone
         return None
 
     def sync_selection(self):

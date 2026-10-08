@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- Every colour is printed as it is on the screen: on a white page and in
+  every export the default curve colours are no longer darkened (their
+  orange came out brown).
+- A file a session cannot find, and cannot read from the copy inside it
+  (a session saved before there were copies), stays in the outliner, in
+  red and MISSING, and what the session held of it - its curve, its
+  analyses, the labels on it - is kept and saved again as it was (before,
+  the next save lost all of it). Right-click it: Locate... (by hand), Find
+  in a folder... (the files under a folder named like it - the same
+  extension, the name 85 % alike or more, a copy's "(1)" first - offered,
+  never taken by themselves), Details..., Forget. Found, the figure opens
+  again with everything back.
+- Details... on a file's right-click menu: where it is, its size and
+  dates, a SHA-256 of its contents and what the file says of itself - to
+  tell apart two files of one name.
+- The source file in a file's settings, and a curve's: type or paste
+  another path (the quotes Windows adds with Ctrl+Shift+C are dropped)
+  and press Enter, or Browse... It takes the file's place as "Change the
+  source file" does - one undo step - and the window opens again on it.
+
+- F3 lists the operators you ran from it last on top, the newest
+  selected: F3 then Enter does it again. Remembered between runs.
+- Aliases of your own: right-click an operator in F3, "Add an alias...",
+  and the word you type finds it from then on (shown greyed beside it).
+  Edit > Operator search saves them as a .json file to share; dropping
+  such a file on the window installs its aliases (you are asked first;
+  operators this panel does not have are skipped), and "Reset the
+  operator search to factory" forgets them and the recent list.
+
 - Settings windows in an order you can work down: the text first, then
   the colour, then what only the window can set (a marker line's
   position, a note's point and arrow, a region's stretch), then sizes and
