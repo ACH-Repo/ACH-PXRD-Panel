@@ -94,12 +94,40 @@ simulations, the analyses and the decorators' wording are PXRD's own.
 | `core/profile.py` | what is particular to PXRD: F staged, a d axis reversed, the d fit, rounded ends, new files stacked, the background |
 | `core/ops.py` | the operator registry (copied from MoloM via Triplot) |
 | `core/userops.py` | F3's memory, the user's: the operators used last, aliases of their own, the shared alias file, the factory reset (`operators.json` beside the preferences) |
+| `core/props.py` | Ctrl+C / Ctrl+V of settings: what is copied, the menu's groups, the changes a paste makes (the same file in every member) |
 | `ui/plot.py` | the painted plot: view, the reversed and broken x axis, gestures, picking, drawing (`_paint_lines` for a simulation as lines) |
 | `ui/window.py` | operators (`set_x_quantity`, `ask_wavelength`, `set_drawing`), menus, docks, drops, exports, undo |
 | `ui/dialogs.py` | every settings window; `PatternRows` (wavelength, simulation, draw mode); `RegionSettings`, `SpanSettings`, `BreakDialog` |
 | `ui/settings.py`, `ui/appearance.py`, `ui/colour.py`, `ui/numbox.py`, `ui/outliner.py`, `ui/palette.py`, `ui/loading.py` | as in IR-Panel |
 
 ## Traps paid for here
+
+* **A style preset carries the page's colour** (2026-10-09, family-wide;
+  `Preset.background`, `presets.KEEP`): `Document.background` came after
+  the presets and was never in them. None ("the theme's") IS carried; a
+  preset without the key is `KEEP` and leaves the page alone. Anything new
+  a figure keeps outside `doc.style`, the layout and `OBJECT_FIELDS` is in
+  no preset until it is added to `from_figure`, `to_state`, `from_state`
+  and `changes`.
+* **A hidden curve hides its labels** (2026-10-08, family-wide;
+  `model.drawn`): a label that belongs to a curve is drawn, picked, boxed,
+  exported and held by a margin only while the curve is shown - its own
+  `visible` is untouched. Anything that asks "is this on the figure"
+  asks `model.drawn(obj)`, never `obj.visible` alone.
+* **Ctrl+V pastes SETTINGS onto a selection** (2026-10-08, family-wide;
+  `core/props.py`, `MainWindow.SETTINGS_WINDOWS`): what a kind's settings
+  are is its settings windows' `FIELDS` less `INDIVIDUAL`; the text and
+  the place are offered by themselves. A new settings window joins
+  `SETTINGS_WINDOWS`, or its kind cannot be copied. The menu is built by
+  `paste_menu` and shown by `ask_paste`, which conftest's
+  `no_modal_loops` refuses (a real QMenu hangs a test however `QMenu.exec`
+  is patched): a test answers `ask_paste` itself. The objects copied are
+  never targets (`_copy_ref`), or Ctrl+C, Ctrl+V on a label asked about
+  its own settings instead of making a new one - an existing test hung
+  on exactly that. A
+  copied curve carries its analyses (`session._analysis_state`);
+  `paste_analyses` measures them again (`session.measure_again`, over the
+  span only on the same data: `session.data_key`) as ONE CallCommand.
 
 * **A file a session cannot read is KEPT** (2026-10-08, family-wide;
   `model.MissingSource` in `doc.missing`): its entry, its curves' entries

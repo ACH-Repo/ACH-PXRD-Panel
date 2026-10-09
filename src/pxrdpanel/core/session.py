@@ -141,6 +141,46 @@ def _restore_analysis(analysis, saved):
 
 
 
+# ------------------------------------------- analyses copied and pasted
+# Ctrl+C on a curve copies its analyses as a session keeps them
+# (`_analysis_state`), and Ctrl+V on another curve makes them again there
+# (`MainWindow.paste_analyses`): from another figure, or another session.
+
+def data_key(scan):
+    """What a curve's points are: its file (by name) and how many points it
+    has. Two curves with the same key are the same data, so an analysis's
+    point span carries over from one to the other."""
+    count = (len(scan.sample.pattern.x)
+             if getattr(scan.sample.pattern, "x", None) is not None else 0)
+    return [os.path.basename(str(scan.sample.path)).lower(), 0, int(count)]
+
+
+def measure_again(scan, saved, keep_span=True):
+    """An analysis (`_analysis_state`) made again on `scan`, with all its
+    settings: over its point span where `keep_span` (the same data), else
+    between its x values. None when it cannot be (no cursors, a model this
+    curve does not offer, nothing to measure)."""
+    cursors = saved.get("cursors") or []
+    entry = measure.by_name(saved.get("model", ""))
+    if (len(cursors) != 2 or entry is None
+            or entry not in measure.models_for(scan)):
+        return None
+    made = measure.run(entry.name, scan, float(cursors[0]),
+                       float(cursors[1]),
+                       span=saved.get("span") if keep_span else None,
+                       quantity=(saved.get("axis")
+                                 if saved.get("axis") in units.QUANTITIES
+                                 else units.TWO_THETA))
+    if made is not None:
+        _restore_analysis(made, saved)
+    return made
+
+
+def restyle(analysis, saved):
+    """An analysis given the settings of a copied one."""
+    _restore_analysis(analysis, saved)
+
+
 # ------------------------------------------------- where a session's files are
 # A session names its files by path. Moved, a file is looked for BESIDE THE
 # SESSION (its folder and the folders under it, by name), and where the

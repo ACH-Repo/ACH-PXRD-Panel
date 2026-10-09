@@ -29,8 +29,8 @@ This file is GENERATED. After adding an operator, run:
 
 | Operator | Key | Lights up when | Note |
 | :-- | :-- | :-- | :-- |
-| Copy the selected labels | `Ctrl+C` | always |  |
-| Paste (a picture, a SMILES, text) | `Ctrl+V` | always |  |
+| Copy the selection (labels, settings, analyses) | `Ctrl+C` | always |  |
+| Paste (onto the selection: settings, analyses; a picture, a SMILES, text) | `Ctrl+V` | always |  |
 | Paste as a text label | `Ctrl+Alt+V` | always |  |
 | Undo | `Ctrl+Z` | there is something to undo | also walks back zoom, pan and fit, one gesture at a time |
 | Redo | `Ctrl+Y` | there is something to redo |  |

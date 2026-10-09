@@ -155,6 +155,7 @@ matplotlib's mathtext takes it.
 | `H` / `Alt+H` | hide the selection / show everything |
 | `N` | show or hide the outliner |
 | `F3` | **operator search**: everything, filtered by what is selected; the ones used last on top, Enter repeats the newest; right-click one for an alias of your own |
+| `Ctrl+C` / `Ctrl+V` | copy the selection / paste: onto selected objects of the copied kind a menu asks what (all settings, colour, sizes, style, text, place; a curve's analyses); otherwise labels, a picture, a SMILES or text |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo, including zoom, pan and fit |
 | `Ctrl+S` / `Ctrl+E` | save the session / export the figure |
 | `Ctrl+,` | settings: the house style, for every figure and for this one |
@@ -185,7 +186,7 @@ is looked for beside the session, and failing that its copy is read; a file
 found nowhere stays in the outliner, MISSING, kept with all it had, and a
 right-click looks for it (Locate..., Find in a folder...). Details... on a
 file's right-click menu tells apart two files of one name. Style presets
-(`.pxrdstyle`) keep a figure's look.
+(`.pxrdstyle`) keep a figure's look, its page colour included.
 
 ## The Start Menu and aliases
 

@@ -102,6 +102,17 @@ KIND_Z = {"region": -10.0, "scan": 0.0, "analysis": 10.0,
           "label": 50.0}
 
 
+def drawn(obj):
+    """Whether `obj` is on the figure: its own Show, and for a label that
+    belongs to a curve, the curve's too - a hidden curve hides its labels,
+    as it hides its analyses (they are not drawn, picked, exported, nor
+    held by a margin). The label's own Show is left as it is."""
+    if not getattr(obj, "visible", True):
+        return False
+    scan = getattr(obj, "scan", None) if isinstance(obj, TextLabel) else None
+    return scan is None or bool(getattr(scan, "visible", True))
+
+
 def z_of(obj):
     """Where `obj` is drawn in the stack: its own z, or its kind's."""
     own = getattr(obj, "z", None)

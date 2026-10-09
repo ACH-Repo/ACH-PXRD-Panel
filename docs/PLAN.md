@@ -228,6 +228,50 @@ He chose, for the whole family:
 Test in `tests/test_family.py`; spans and regions in
 `tests/test_window.py`.
 
+## Round 11 (2026-10-08): the NEXT.md requests - family-wide
+
+Christian, 2026-10-08, on the three requests parked that morning; he
+chose each recommendation and the whole family for all three.
+
+* **A hidden curve hides its labels** (`model.drawn`). In Triplot's
+  `Hbc_Tgs.dscpanel` an old "ZIF-62" label hung from CN-103's HIDDEN
+  first up-scan, still drawn 1.8 cm above the page, so the top margin
+  held it and a blade jumped to 1.8 cm of white space. Now such a label
+  is not drawn, picked, boxed, exported or held by a margin; its own
+  Show is untouched and the outliner greys it.
+* **Copy properties**: Ctrl+C copies the selection - labels as before,
+  and every object's settings as JSON (`core/props.py`, the same file in
+  each member); Ctrl+V with objects of a copied kind selected opens a
+  menu at the pointer (`paste_menu`, `ask_paste`): All settings (colour,
+  sizes, style), Colour, Sizes, Style, Text, Place, and Paste as new for
+  labels. What a kind's settings are is its settings windows' `FIELDS`
+  less `INDIVIDUAL` (`SETTINGS_WINDOWS`); the text and the place only by
+  name. Several copied onto as many selected go in order. No new key:
+  Ctrl+Shift+V was taken, and a QMenu does the arrow keys and letters.
+* **Analyses from another session**, through the same paste (his choice
+  over a menu command): a copied curve carries its analyses; "Analyses"
+  measures each again on the selected curve with all its settings
+  (`MainWindow.paste_analyses`, `session.measure_again`): over the sample
+  span where the data is the same (`session.data_key`: file name,
+  segment, length), else between its x values; one already there is
+  skipped; a model the curve does not offer is reported. TRIOS's own
+  analyses (Triplot) give their settings by key (`session.restyle`). One
+  undo step.
+
+Tests in `tests/test_family.py`.
+
+## Round 12 (2026-10-09): presets carry the page's colour - family-wide
+
+Christian asked whether the background colour was added after the style
+sheets and so could not be carried by one. It was: presets came in
+Triplot's round 23 (2026-09-27), the page's colour (`Document.background`)
+in round 26, and nothing put it into them. He chose: always carried - a
+colour, or None for "the theme's" - and applied in the preset's undo step;
+a preset saved before says nothing (`presets.KEEP`) and leaves the page.
+`Preset.background`; `from_figure`, `to_state`, `from_state` (a
+"#rrggbb" or null, anything else ignored), `changes`. Test in
+`tests/test_family.py`.
+
 ## Next (suggested; Christian decides)
 
 - Use it on real figures and collect requests here.

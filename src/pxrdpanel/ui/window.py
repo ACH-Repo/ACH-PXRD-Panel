@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (QApplication, QDialog,
 
 from .. import branding
 from ..core import (arrange, crystal, export, loader, measure, model, ops,
-                    presets, profile, readers,
+                    presets, profile, props, readers,
                     session, style, undo, units)
 from ..core import numbers
 from ..core.chem import mirrored_layout
@@ -1031,12 +1031,14 @@ class MainWindow(QMainWindow):
           lambda c: c.close_step(), category="File", key="Ctrl+W",
           shortcut="Ctrl+W", aliases=("quit", "exit"))
 
-        r("edit.copy", "Copy the selected labels",
+        r("edit.copy", "Copy the selection (labels, settings, analyses)",
           lambda c: c.copy_selected(), category="Edit", key="Ctrl+C",
           shortcut="Ctrl+C",
           enabled=lambda c: bool(c.copyable()),
-          aliases=("duplicate", "clipboard", "label", "note"))
-        r("edit.paste", "Paste (a picture, a SMILES, text)",
+          aliases=("duplicate", "clipboard", "label", "note",
+                   "copy settings", "properties", "attributes"))
+        r("edit.paste", "Paste (onto the selection: settings, analyses; "
+          "a picture, a SMILES, text)",
           lambda c: c.paste(), category="Edit", key="Ctrl+V",
           shortcut="Ctrl+V",
           aliases=("image", "picture", "structure", "smiles", "molecule",
@@ -4380,6 +4382,30 @@ class MainWindow(QMainWindow):
         from ..core import chem
         clipboard = QApplication.clipboard()
         mime = clipboard.mimeData()
+        copy = None
+        if not as_text and mime is not None:
+            copy = (props.read(bytes(mime.data(self.OBJECTS_MIME)))
+                    if mime.hasFormat(self.OBJECTS_MIME)
+                    else props.read(clipboard.text() or ""))
+        if copy is not None:
+            # Objects copied: their settings onto the selected ones of
+            # their kind, through a menu at the pointer.
+            if copy.get("app") != branding.APP_NAME:
+                self.note.setText("Copied in {}: it pastes there".format(
+                    copy.get("app") or "another program"))
+                return None
+            labels = (bytes(mime.data(self.LABELS_MIME))
+                      if mime.hasFormat(self.LABELS_MIME) else None)
+            choices = self.paste_choices(copy, labels)
+            if choices:
+                return self.ask_paste(choices)
+            if labels is None:
+                self.note.setText(
+                    "Select {} to paste the copied settings onto".format(
+                        " or ".join(sorted(set(
+                            self.kind_name(e["kind"]).lower()
+                            for e in copy["objects"])))))
+                return None
         if (not as_text and mime is not None
                 and mime.hasFormat(self.LABELS_MIME)):
             made = self.paste_labels(bytes(mime.data(self.LABELS_MIME)))
@@ -4413,23 +4439,106 @@ class MainWindow(QMainWindow):
     #: Labels on the clipboard: their look and their places, as JSON.
     LABELS_MIME = "application/x-{}-labels".format(branding.EXE_NAME)
 
+    #: Each kind's settings windows - what Ctrl+V can paste onto it is
+    #: theirs (`settings_fields`) - and its name in the paste menu.
+    SETTINGS_WINDOWS = (
+        (model.Scan, (ScanSettings,), "Patterns"),
+        (model.Analysis, (AnalysisSettings,), "Analyses"),
+        (model.TextLabel, (LabelSettings,), "Labels"),
+        (model.Axis, (AxisSettings, NumberSettings, CaptionSettings), "Axes"),
+        (model.Legend, (LegendSettings,), "Legend"),
+        (model.Region, (RegionSettings,), "Regions"),
+        (model.SpanArrow, (SpanSettings,), "Distance arrows"),
+        (model.OffsetMarker, (OffsetMarkerSettings,), "Offset markers"),
+        (model.ImageArtist, (ImageSettings,), "Pictures"),
+        (model.MoleculeArtist, (MoleculeSettings,), "Structures"),
+    )
+
+    # ------------------------------------------- copying settings about
+    #: Objects on the clipboard: every selected object's settings, and a
+    #: curve's or an analysis's analyses, as JSON (`core/props.py`).
+    OBJECTS_MIME = "application/x-{}-objects".format(branding.EXE_NAME)
+
+    def settings_fields(self, kind):
+        """`(fields, individual)` of a kind (`props.kind_of`): what its
+        settings windows set, and which of that is one object's own."""
+        for cls, windows, _name in self.SETTINGS_WINDOWS:
+            if cls.__name__ == kind:
+                fields, own = [], []
+                for window in windows:
+                    fields += [n for n in window.FIELDS if n not in fields]
+                    own += [n for n in window.INDIVIDUAL if n not in own]
+                return fields, own
+        return [], []
+
+    def kind_name(self, kind):
+        """"Curves", "Labels"... for a kind, in the paste menu."""
+        for cls, _windows, name in self.SETTINGS_WINDOWS:
+            if cls.__name__ == kind:
+                return name
+        return kind
+
     def copyable(self):
-        """The selected labels a Ctrl+C copies (marker lines are not)."""
+        """What Ctrl+C copies: the selected objects that have settings."""
         return [o for o in self.doc.selected()
-                if isinstance(o, model.TextLabel) and o.vline is None]
+                if self.settings_fields(props.kind_of(o))[0]]
+
+    def _copied(self, obj):
+        """One object as the clipboard holds it (`props.state`)."""
+        kind = props.kind_of(obj)
+        fields, _own = self.settings_fields(kind)
+        entry = {"kind": kind, "settings": props.settings_of(obj, fields),
+                 "ref": self._copy_ref(obj)}
+        if isinstance(obj, model.Scan):
+            entry["data"] = session.data_key(obj)
+            entry["analyses"] = [session._analysis_state(a)
+                                 for a in obj.analysis_objects]
+        elif isinstance(obj, model.Analysis):
+            entry["data"] = session.data_key(obj.scan)
+            entry["analysis"] = session._analysis_state(obj)
+        return entry
+
+    @staticmethod
+    def _copy_ref(obj):
+        """Which object a copy was made of, while this program runs: a
+        paste never goes onto the objects copied (Ctrl+C, Ctrl+V on the
+        same labels makes new ones, as it always did)."""
+        return "{}:{}".format(os.getpid(), id(obj))
 
     def copy_selected(self):
-        """Ctrl+C: the selected labels onto the clipboard - their text for
-        any other program, and everything about them for pasting here:
-        look, and where each is drawn
-        relative to the first. Pasted they are FREE labels; one that
-        should belong to a curve is then given to it (Ctrl+P, or dropped
-        on it in the outliner)."""
+        """Ctrl+C: the selection onto the clipboard. Every object with its
+        settings (and a curve its analyses), for Ctrl+V onto others of its
+        kind; the selected labels besides, as before - their text for any
+        other program, and everything about them for pasting here as new
+        ones: look, and where each is drawn relative to the first. Pasted
+        they are FREE labels; one that should belong to a curve is then
+        given to it (Ctrl+P, or dropped on it in the outliner). Copied
+        without a label, the clipboard's text is the copy's JSON."""
         import json
         from PySide6.QtCore import QMimeData
-        labels = self.copyable()
-        if not labels:
+        objects = self.copyable()
+        if not objects:
             return 0
+        mime = QMimeData()
+        copy = props.state(branding.APP_NAME,
+                           [self._copied(o) for o in objects])
+        mime.setData(self.OBJECTS_MIME, json.dumps(copy).encode("utf-8"))
+        labels = [o for o in objects
+                  if isinstance(o, model.TextLabel) and o.vline is None]
+        if labels:
+            self._copy_labels(labels, mime)
+        else:
+            mime.setText(json.dumps(copy, indent=1))
+        QApplication.clipboard().setMimeData(mime)
+        self.note.setText("Copied {} object(s)".format(len(objects))
+                          if len(objects) != len(labels)
+                          else "Copied {} label(s)".format(len(labels)))
+        return len(objects)
+
+    def _copy_labels(self, labels, mime):
+        """The labels' text, and the labels as `paste_labels` makes them
+        again, onto `mime`."""
+        import json
         plot = self.plot
         rect = plot.plot_rect()
         first = plot.artist_point(labels[0], rect)
@@ -4450,15 +4559,198 @@ class MainWindow(QMainWindow):
                 "tip": (None if tip is None else
                         [tip.x() - first[0], tip.y() - first[1]]),
                 "from": [px - first[0], py - first[1]]})
-        mime = QMimeData()
         mime.setText("\n".join(label.text for label in labels))
         mime.setData(self.LABELS_MIME,
                      json.dumps({"labels": entries,
                                  "first": [first[0], first[1]]}).encode(
                                      "utf-8"))
-        QApplication.clipboard().setMimeData(mime)
-        self.note.setText("Copied {} label(s)".format(len(labels)))
-        return len(labels)
+
+    def paste_choices(self, copy, labels=None):
+        """What Ctrl+V can do with a copy (`props.read`) on the selection:
+        `[(section, title, tooltip, action), ...]` - its settings onto the
+        selected objects of a copied kind, all or a group of them, and its
+        analyses onto selected curves; with copied labels (`labels`, the
+        clipboard's), "Paste as new". Empty when nothing selected takes
+        any of it."""
+        objects = copy.get("objects") or []
+        copied = set(entry.get("ref") for entry in objects)
+        selected = [o for o in self.doc.selected()
+                    if self._copy_ref(o) not in copied]
+        out = []
+        kinds = []
+        for entry in objects:
+            if entry["kind"] not in kinds:
+                kinds.append(entry["kind"])
+        for kind in kinds:
+            targets = [o for o in selected if props.kind_of(o) == kind]
+            if not targets:
+                continue
+            sources = [e for e in objects if e["kind"] == kind]
+            fields, own = self.settings_fields(kind)
+            for title, names in props.groups(fields, own):
+                out.append((self.kind_name(kind), title,
+                            "Onto the {} selected: {}".format(
+                                len(targets), ", ".join(names)),
+                            lambda s=sources, t=targets, n=names, w=title:
+                            self.paste_settings(s, t, n, w)))
+        copied = props.copied_analyses(objects)
+        scans = [o for o in selected if isinstance(o, model.Scan)]
+        count = sum(len(group) for group in copied)
+        if copied and scans:
+            out.append((self.kind_name("Scan"), "Analyses ({})".format(count),
+                        "Measured again on the {} selected curve(s), with "
+                        "all their settings".format(len(scans)),
+                        lambda g=copied, t=scans: self.paste_analyses(g, t)))
+        if out and labels is not None:
+            out.insert(0, ("", "Paste as new", "The copied labels, as new "
+                           "free labels",
+                           lambda d=labels: self.paste_labels(d)))
+        return out
+
+    def paste_menu(self, choices):
+        """The Ctrl+V menu of `choices` (`paste_choices`), BUILT and not
+        shown: `(menu, {action: what it does})`. Arrow keys and Enter, or
+        the underlined letter; a kind of its own per submenu when the
+        selection holds several."""
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        sections = []
+        for section, _t, _tip, _act in choices:
+            if section and section not in sections:
+                sections.append(section)
+        acts = {}
+        submenus = {}
+        for section, title, tip, act in choices:
+            where = menu
+            if section and len(sections) > 1:
+                if section not in submenus:
+                    submenus[section] = menu.addMenu(section)
+                where = submenus[section]
+            text = props.menu_text(title)
+            if title.startswith("Analyses"):
+                text = "A&n" + title[2:]
+            elif title == "Paste as new":
+                text = "Paste as &new"
+            action = where.addAction(text)
+            action.setToolTip(tip)
+            acts[action] = act
+        # Held by the menu's wrapper: a submenu fetched back through a
+        # temporary one can already be deleted (CLAUDE.md).
+        menu._paste = list(submenus.values())
+        return menu, acts
+
+    def ask_paste(self, choices):
+        """The Ctrl+V menu at the pointer; what the chosen entry did, or
+        None. A method of its own, so a test can choose."""
+        menu, acts = self.paste_menu(choices)
+        chosen = menu.exec(QCursor.pos())
+        act = acts.get(chosen)
+        return act() if act is not None else None
+
+    def paste_settings(self, sources, targets, names, title="settings"):
+        """Copied settings (`names` of them) onto `targets`, each from its
+        copy (`props.pairs`). One undo step; the number changed."""
+        changes = []
+        changed = set()
+        for source, target in props.pairs(sources, targets):
+            made = props.changes(target, source.get("settings") or {}, names)
+            made = [c for c in made if getattr(c[0], c[1]) != c[2]]
+            changes += made
+            if made:
+                changed.add(id(target))
+        if not changes:
+            self.note.setText("Nothing to change: the {} selected have "
+                              "those settings".format(len(targets)))
+            return 0
+        self.undo.set_props(changes, "paste {}".format(title.lower()))
+        self._live_change()
+        self.note.setText("Pasted {} onto {} object(s)".format(
+            title.lower(), len(changed)))
+        return len(changed)
+
+    def paste_analyses(self, copied, scans):
+        """Copied analyses (`props.copied_analyses`) onto `scans`: one made
+        here is MEASURED AGAIN on the curve with all its settings - over
+        its sample span on the same data (`session.data_key`), else between
+        its temperatures - unless the curve has it already; a file's own
+        gives its settings to the curve's analysis of the same key. Each
+        copied curve's onto a curve of its own when as many are selected,
+        else all of them onto each. One undo step; the analyses made."""
+        lists = [(scan, list(scan.analysis_objects)) for scan in scans]
+        olds = {}
+        made, styled, there, failed = [], [], 0, []
+        if len(copied) == len(scans):
+            plan = list(zip(copied, scans))
+        else:
+            every = [pair for group in copied for pair in group]
+            plan = [(every, scan) for scan in scans]
+        for group, scan in plan:
+            key = session.data_key(scan)
+            for data, saved in group:
+                if saved.get("source", "panel") != "panel":
+                    match = [a for a in scan.analysis_objects
+                             if a.key() == saved.get("key")]
+                    if not match:
+                        failed.append(saved.get("model") or "an analysis")
+                        continue
+                    olds.setdefault(id(match[0]),
+                                    (match[0], dict(match[0].__dict__)))
+                    session.restyle(match[0], saved)
+                    styled.append(match[0])
+                    continue
+                if self._has_analysis(scan, saved):
+                    there += 1
+                    continue
+                new = session.measure_again(scan, saved,
+                                            keep_span=(data == key))
+                if new is None:
+                    failed.append(saved.get("model") or "an analysis")
+                else:
+                    made.append(new)
+        after = [(scan, list(scan.analysis_objects)) for scan in scans]
+        news = dict((id(a), (a, dict(a.__dict__))) for a in styled)
+
+        def put(listed, states):
+            for scan, items in listed:
+                scan._analyses = list(items)
+            for analysis, state in states.values():
+                analysis.__dict__.clear()
+                analysis.__dict__.update(state)
+
+        if made or styled:
+            put(lists, olds)
+            # CallCommand puts them on (it applies itself when built).
+            self.undo.push(undo.CallCommand(
+                lambda: put(after, news), lambda: put(lists, olds),
+                "paste analyses"))
+            self._live_change()
+        bits = []
+        if made:
+            bits.append("{} analyses made".format(len(made)))
+        if styled:
+            bits.append("{} given their settings".format(len(styled)))
+        if there:
+            bits.append("{} there already".format(there))
+        if failed:
+            bits.append("{} could not be: {}".format(
+                len(failed), ", ".join(sorted(set(failed)))))
+        self.note.setText("; ".join(bits) or "Nothing to paste")
+        return made
+
+    @staticmethod
+    def _has_analysis(scan, saved):
+        """True when `scan` already has the analysis `saved` names: the
+        same model between the same cursors."""
+        cursors = [float(c) for c in saved.get("cursors") or ()]
+        for analysis in scan.analysis_objects:
+            if analysis.model_name != saved.get("model"):
+                continue
+            mine = [float(c) for c in analysis.cursors()]
+            if len(mine) == len(cursors) and all(
+                    abs(a - b) <= 1e-6 * max(1.0, abs(b))
+                    for a, b in zip(mine, cursors)):
+                return True
+        return False
 
     def paste_labels(self, data):
         """Labels copied here, pasted as free labels: at the pointer when

@@ -358,6 +358,10 @@ class Outliner(QTreeWidget):
         item.setText(1, "marker line" if label.vline is not None
                      else "note" if label.leader else "label")
         item.setForeground(1, QBrush(_DIM))
+        if label.visible and not model.drawn(label):
+            # Hidden with its curve: its own tick stays as it was.
+            item.setForeground(0, QBrush(_DIM))
+            item.setText(1, item.text(1) + ", hidden with its curve")
         item.setSelected(label.selected)
         return item
 

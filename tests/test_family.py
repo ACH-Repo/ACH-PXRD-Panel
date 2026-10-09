@@ -872,3 +872,198 @@ def test_a_missing_file_is_kept_and_found_again(stack_window, tmp_path,
         e["path"] for e in saved["samples"][1:]]
     assert again["colour_links"] == saved["colour_links"]
     assert issubclass(type(gone), model.MissingSource)
+
+
+# ----------------------------------------- a hidden curve hides its labels
+def test_a_hidden_curve_hides_its_labels(stack_window):
+    """A label that belongs to a curve is hidden with it: not drawn, not
+    picked, not caught by a box, held by no margin - its own Show left as
+    it was, so it is back with the curve. A label far above the page used
+    to make the top margin jump to it."""
+    import sys
+    from PySide6.QtCore import QPointF
+    window = stack_window
+    doc, plot = window.doc, window.plot
+    package = type(doc).__module__.split(".")[0]
+    model = sys.modules[package + ".core.model"]
+    scan = doc.scans[0]
+    label = doc.add_label("far above", 0.5, 0.5, scan)
+    window.refresh()
+    plot.grab()
+    rect = plot.plot_rect()
+    x, _y = plot.artist_point(label, rect)
+    plot.set_artist_point(label, x, rect.top() - 150.0, rect, clamp=False)
+    window.refresh()
+    plot.grab()
+    assert plot.page_needs()[2] > 100.0          # it holds the top margin
+    scan.visible = False
+    window.refresh()
+    plot.grab()
+    assert label.visible and not model.drawn(label)
+    assert plot.page_needs()[2] < 20.0
+    assert all(obj is not label for obj, _box in plot._text_boxes)
+    row = [item for item in window.outliner._items()
+           if window.outliner._object(item) is label]
+    assert row and "hidden with its curve" in row[0].text(1)
+    whole = plot.plot_rect().adjusted(-400.0, -400.0, 400.0, 400.0)
+    plot.select_in_box(QPointF(whole.topLeft()), QPointF(whole.bottomRight()))
+    assert not label.selected
+    scan.visible = True
+    window.refresh()
+    plot.grab()
+    assert model.drawn(label) and plot.page_needs()[2] > 100.0
+
+
+# ------------------------------------------- settings copied and pasted
+@pytest.fixture
+def clipboard():
+    """The clipboard, emptied afterwards: under the offscreen platform Qt
+    ends the process as it exits while the clipboard holds data."""
+    from PySide6.QtWidgets import QApplication
+    yield QApplication.clipboard()
+    QApplication.clipboard().clear()
+
+
+def _choose(window, title):
+    """Answer the Ctrl+V menu with the entry `title` starts."""
+    asked = []
+
+    def ask(choices):
+        asked.append([t for _section, t, _tip, _act in choices])
+        menu, acts = window.paste_menu(choices)     # built, never shown
+        assert len(acts) == len(choices) and not menu.isEmpty()
+        for _section, t, _tip, act in choices:
+            if t.startswith(title):
+                return act()
+        raise AssertionError("no {!r} in {}".format(title, asked[-1]))
+
+    window.ask_paste = ask
+    return asked
+
+
+def test_ctrl_v_pastes_copied_settings_onto_the_selection(stack_window,
+                                                          clipboard):
+    """Ctrl+C copies the selection; Ctrl+V with objects of its kind selected
+    asks what to paste - all the settings, or the colour, the sizes, the
+    style, the text alone - one undo step. With nothing of the kind
+    selected, copied labels are pasted as new ones, as before."""
+    window = stack_window
+    doc = window.doc
+    a, b, c = doc.scans[:3]
+    a.colour = "#123456"
+    a.line_width = 2.5
+    doc.select_only([a])
+    assert window.copy_selected() == 1
+    doc.select_only([b, c])
+    asked = _choose(window, "Colour")
+    window.paste()
+    assert "All settings" in asked[0] and "Colour" in asked[0]
+    assert b.colour == c.colour == "#123456"
+    assert b.line_width != 2.5                     # the colour alone
+    window.undo.undo()
+    assert b.colour != "#123456" and c.colour != "#123456"
+    _choose(window, "All settings")
+    window.paste()
+    assert b.line_width == c.line_width == 2.5 and b.colour == "#123456"
+
+    one = doc.add_label("one", 0.3, 0.3)
+    two = doc.add_label("two", 0.6, 0.6)
+    one.size, one.bold = 17.0, True
+    window.refresh()
+    doc.select_only([one])
+    window.copy_selected()
+    count = len(doc.labels)
+    asked = _choose(window, "All settings")
+    window.paste()                     # the copy still selected: a new one
+    assert asked == [] and len(doc.labels) == count + 1
+    doc.select_only([two])
+    asked = _choose(window, "All settings")
+    window.paste()
+    assert asked[0][0] == "Paste as new" and "Text" in asked[0]
+    assert two.size == 17.0 and two.bold and two.text == "two"
+    _choose(window, "Text")
+    window.paste()
+    assert two.text == "one"
+    doc.select_only([])
+    count = len(doc.labels)
+    window.paste()                                 # nothing of the kind
+    assert len(doc.labels) == count + 1
+
+
+def test_a_curves_analyses_paste_onto_another_curve(stack_window,
+                                                     clipboard):
+    """A curve copied with its analyses: pasted onto another curve they are
+    measured again there with all their settings, once - a second paste
+    finds them there already - and an undo takes them off."""
+    import sys
+    import numpy as np
+    window = stack_window
+    doc, plot = window.doc, window.plot
+    package = type(doc).__module__.split(".")[0]
+    measure = sys.modules[package + ".core.measure"]
+    a, b = doc.scans[:2]
+    plot.grab()
+    xs = [t for t in plot.traces if t.scan is a][0].x
+    low, high = (float(v) for v in np.nanpercentile(xs, [35.0, 65.0]))
+    made = None
+    for entry in measure.models_for(a):
+        made = measure.run(entry.name, a, low, high)
+        if made is not None:
+            break
+    assert made is not None
+    made.colour = "#aa3300"
+    window.refresh()
+    before = len(b.analysis_objects)
+    doc.select_only([a])
+    window.copy_selected()
+    doc.select_only([b])
+    asked = _choose(window, "Analyses")
+    window.paste()
+    assert "Analyses (1)" in asked[0]
+    new = b.analysis_objects[before:]
+    assert len(new) == 1 and new[0].model_name == made.model_name
+    assert new[0].colour == "#aa3300"
+    window.paste()                                 # there already
+    assert len(b.analysis_objects) == before + 1
+    window.undo.undo()
+    assert len(b.analysis_objects) == before
+    window.undo.redo()
+    assert b.analysis_objects[before:] == new
+
+
+# ------------------------------------------- a preset carries the page
+def test_a_style_preset_carries_the_pages_colour(stack_window, tmp_path):
+    """The page's colour came after the presets and was never carried: a
+    preset now saves it - a colour, or the theme's - and applies it in its
+    undo step. One saved before says nothing of it and leaves the page."""
+    import sys
+    window = stack_window
+    doc = window.doc
+    package = type(doc).__module__.split(".")[0]
+    presets = sys.modules[package + ".core.presets"]
+    window.set_background("#fff3e0")
+    warm = presets.from_figure(doc, "warm")
+    path = presets.save(warm, str(tmp_path))
+    warm = presets.read(path)
+    assert warm.background == "#fff3e0"
+    window.set_background(None)
+    themed = presets.read(presets.save(presets.from_figure(doc, "themed"),
+                                       str(tmp_path)))
+    assert themed.background is None
+    window.apply_preset(warm)
+    assert doc.background == "#fff3e0"
+    window.undo.undo()
+    assert doc.background is None
+    window.apply_preset(warm)
+    window.apply_preset(themed)
+    assert doc.background is None                # the theme's again
+    old = presets.to_state(warm)
+    del old["background"]                         # saved before it was kept
+    old = presets.from_state(old)
+    assert old.background is presets.KEEP
+    window.set_background("#ffffff")
+    window.apply_preset(old)
+    assert doc.background == "#ffffff"
+    state = presets.to_state(warm)
+    state["background"] = "red; not a colour"
+    assert presets.from_state(state).background is presets.KEEP

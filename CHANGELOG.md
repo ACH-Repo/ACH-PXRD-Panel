@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- A style preset carries the page's colour - white, another, or the
+  theme's - saved with it and put back when it is applied. The colour came
+  after the presets and was left out of them; a preset saved before still
+  leaves the page as it is.
+- A label that belongs to a curve is hidden with it: not drawn, not
+  exported, and no longer holding a page margin (a label hanging from a
+  hidden curve far above the page made the top margin jump to it). Its
+  own Show is left as it was, so it is back with the curve; the outliner
+  greys it, "hidden with its curve".
+- Copy settings from one object onto others: Ctrl+C copies the selection,
+  and Ctrl+V with objects of the same kind selected opens a menu at the
+  pointer - All settings, Colour, Sizes, Style, Text, Place - worked with
+  the arrow keys and Enter or the underlined letter; one undo step. As
+  many copied as selected go one onto each, else the first onto all.
+  Nothing of the kind selected: Ctrl+V pastes as before (copied labels as
+  new ones).
+- A curve's analyses travel the same way: Ctrl+C on a curve, Ctrl+V on
+  another (in another tab too, so from another session) and choose
+  Analyses - each measured again there with all its settings, over the
+  same samples when it is the same file, else between the same x values;
+  one already there is not made twice.
+
 - Every colour is printed as it is on the screen: on a white page and in
   every export the default curve colours are no longer darkened (their
   orange came out brown).

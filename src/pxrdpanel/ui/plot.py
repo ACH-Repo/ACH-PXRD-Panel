@@ -1758,7 +1758,7 @@ class PlotWidget(QWidget):
         for side, over in self._numbers_overhang(rect, base).items():
             need[side] = max(need[side], over)
         for artist in decorators_of(self.doc):
-            if not getattr(artist, "visible", True):
+            if not model.drawn(artist):
                 continue
             try:
                 box = self.rotated_bounds(artist, self.artist_box(artist,
@@ -2923,7 +2923,8 @@ class PlotWidget(QWidget):
             near(label, box, -model.z_of(label))
         rect_now = self.plot_rect()
         for label in doc.labels:
-            x = self.vline_px(label, rect_now) if label.visible else None
+            x = (self.vline_px(label, rect_now) if model.drawn(label)
+                 else None)
             if (x is not None and rect_now.top() <= point.y()
                     <= rect_now.bottom() and abs(point.x() - x) <= radius):
                 hits.append((abs(point.x() - x), -model.z_of(label), label,
@@ -3079,7 +3080,7 @@ class PlotWidget(QWidget):
                 chosen.append(analysis)
         rect = self.plot_rect()
         for obj in doc.objects():
-            if (not self.is_artist(obj) or not getattr(obj, "visible", True)
+            if (not self.is_artist(obj) or not model.drawn(obj)
                     or obj in chosen):
                 continue
             bounds = self.rotated_bounds(obj, self.artist_box(obj, rect),
@@ -6530,7 +6531,8 @@ class PlotWidget(QWidget):
         if doc is None:
             return
         for label in doc.labels:
-            if not label.visible or (only is not None and label is not only):
+            if not model.drawn(label) or (only is not None
+                                          and label is not only):
                 continue
             if (getattr(label, "shows", None) == "multiplier"
                     and label.scan is not None and not label.scan.scaled):
@@ -7030,7 +7032,7 @@ class PlotWidget(QWidget):
         if doc is None:
             return None
         for label in doc.labels:
-            if not (label.selected and label.visible and label.leader):
+            if not (label.selected and model.drawn(label) and label.leader):
                 continue
             if getattr(label, "attached", False):
                 continue                # the whole note slides instead

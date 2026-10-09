@@ -102,6 +102,11 @@ def no_modal_loops(monkeypatch):
                         refused("QFileDialog.getSaveFileName", ("", "")))
     monkeypatch.setattr(QColorDialog, "getColor",
                         refused("QColorDialog.getColor", QColor))
+    # Patching QMenu.exec does not stop a real menu (CLAUDE.md): the
+    # Ctrl+V menu is refused where it is asked for.
+    from pxrdpanel.ui.window import MainWindow
+    monkeypatch.setattr(MainWindow, "ask_paste",
+                        refused("MainWindow.ask_paste", None))
     yield opened
     assert not opened, "a test reached a modal dialog: {}".format(opened)
 

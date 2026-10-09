@@ -20,9 +20,15 @@ What a preset holds:
   look. Nothing that belongs to one figure's data: patterns, labels, marker
   lines, analyses, regions, pictures.
 
+* **the page's colour**: white, another, or "the theme's" (None) -
+  `Document.background`, which came after the presets. A preset saved
+  before they carried it says nothing of it (`KEEP`) and leaves the page
+  as it is.
+
 What it does not touch: the other objects' own choices (a label sized by
 hand stays so), the handling settings (the pick distance is about a hand,
-not a figure) and the screen theme.
+not a figure) and the screen theme (dark or light: the program's, not the
+figure's).
 
 Applying one is ONE undo step on the figure's column. The files are JSON
 with the extension in `branding.PRESET_EXT`, in a `presets` folder beside
@@ -45,6 +51,12 @@ from . import style
 
 FORMAT = "style-preset"
 VERSION = 1
+
+#: A preset that says nothing of the page's colour (one saved before it
+#: carried it): applying it leaves the page as it is.
+KEEP = object()
+#: A page colour a preset may hold, besides None (the theme's).
+_PAGE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 _AXIS_FIELDS = ("visible", "label", "label_size", "label_along", "label_gap",
                 "show_numbers", "show_ticks", "tick_size",
@@ -124,8 +136,10 @@ class Preset(object):
     {"axis_x" / "axis_y" / "legend": {field: value}}."""
 
     def __init__(self, name, values=None, layout=None, path="",
-                 objects=None):
+                 objects=None, background=KEEP):
         self.name = str(name)
+        #: The page's colour: "#rrggbb", None for the theme's, or `KEEP`.
+        self.background = background
         self.values = dict(values or {})
         self.layout = dict(layout) if layout else None
         self.objects = dict((k, dict(v)) for k, v in (objects or {}).items())
@@ -150,7 +164,8 @@ def from_figure(doc, name, with_layout=True):
     objects = dict((name, dict((field, getattr(obj, field))
                                for field in OBJECT_FIELDS[name]))
                    for name, obj in figure_objects(doc).items())
-    return Preset(name, values, layout, objects=objects)
+    return Preset(name, values, layout, objects=objects,
+                  background=doc.background)
 
 
 def to_state(preset):
@@ -161,6 +176,8 @@ def to_state(preset):
     if preset.objects:
         state["objects"] = dict((k, dict(v))
                                 for k, v in preset.objects.items())
+    if preset.background is not KEEP:
+        state["background"] = preset.background
     return state
 
 
@@ -200,9 +217,13 @@ def from_state(state, path=""):
                 kept[field] = value
         if kept:
             objects[name] = kept
+    background = KEEP
+    raw = state.get("background", KEEP)
+    if raw is None or (isinstance(raw, str) and _PAGE.match(raw)):
+        background = raw
     name = str(state.get("name") or "").strip() or os.path.splitext(
         os.path.basename(path))[0] or "Preset"
-    return Preset(name, values, layout, path, objects)
+    return Preset(name, values, layout, path, objects, background)
 
 
 def read(path):
@@ -295,4 +316,7 @@ def changes(doc, preset):
         for field, value in fields.items():
             if getattr(obj, field, None) != value:
                 out.append((obj, field, value))
+    if (preset.background is not KEEP
+            and getattr(doc, "background", None) != preset.background):
+        out.append((doc, "background", preset.background))
     return out
